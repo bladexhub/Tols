@@ -1,0 +1,14 @@
+return {
+    WIN=Color3.fromRGB(245,245,245),
+    HDR2=Color3.fromRGB(230,230,230),
+    DIV=Color3.fromRGB(210,210,210),
+    CLOSE=Color3.fromRGB(200,50,50),
+    MINI=Color3.fromRGB(120,130,150),
+    WBRD=Color3.fromRGB(200,200,200),
+    TXT=Color3.fromRGB(30,30,30),
+    TXTW=Color3.fromRGB(0,0,0),
+    CON_INP=Color3.fromRGB(255,255,255),
+    CON_TXT=Color3.fromRGB(20,20,20),
+    CON_BRD=Color3.fromRGB(180,180,180),
+    -- etc.
+}
