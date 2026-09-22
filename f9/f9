@@ -868,15 +868,30 @@ REOPEN_BTN.MouseLeave:Connect(function()
 end)
 
 local CLOSED = false
+local savedScroll = nil
 
 local function showWindow()
     REOPEN_BTN.Visible = false
     WIN.Visible = true
     WIN_SCALE.Scale = 0.9
     TW(WIN_SCALE, TI_POP, { Scale = 1 })
+
+    task.defer(function()
+        task.wait(0.05)
+        if not CON_SCR.Parent then return end
+        if savedScroll then
+            CON_SCR.CanvasPosition = savedScroll
+        else
+            CON_SCR.CanvasPosition = Vector2.new(0, CON_SCR.AbsoluteCanvasSize.Y)
+        end
+    end)
 end
 
 local function hideWindow()
+    if CON_SCR.Parent then
+        savedScroll = CON_SCR.CanvasPosition
+    end
+
     local t = TWc(WIN_SCALE, TI_FAST, { Scale = 0.9 })
     t.Completed:Connect(function()
         if WIN and WIN.Parent and not CLOSED then
@@ -896,6 +911,7 @@ local function shutdown()
     activeHandle = nil
     dragStart, winStart = nil, nil
     resizeStart, resizeWinPos, resizeWinSize = nil, nil, nil
+    savedScroll = nil
 
     for _, conn in ipairs(connections) do
         pcall(function() conn:Disconnect() end)
