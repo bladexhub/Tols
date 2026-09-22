@@ -340,23 +340,44 @@ local function trackRow(row)
     end
 end
 
-local function scrollToBottom()
-    task.defer(function()
-        if CON_SCR.Parent then
-            local target = Vector2.new(0, CON_SCR.AbsoluteCanvasSize.Y)
-            local start = CON_SCR.CanvasPosition
-            if (target - start).Magnitude > 1 then
-                local t0 = os.clock()
-                local conn
-                conn = RunService.RenderStepped:Connect(function()
-                    local a = math.min((os.clock() - t0) / 0.18, 1)
-                    local e = 1 - (1 - a) * (1 - a)
-                    CON_SCR.CanvasPosition = start:Lerp(target, e)
-                    if a >= 1 then
-                        if conn then conn:Disconnect() end
-                    end
-                end)
+-- ═══════════════════════════════════════════════════════════════
+--  ESTADO DE SCROLL
+--  isOpen        -> controla si los nuevos logs deben auto-scrollear
+--  savedScroll   -> posición guardada al ocultar para restaurar al mostrar
+--  lockScroll    -> bloquea auto-scroll durante la animación de mostrado
+-- ═══════════════════════════════════════════════════════════════
+local isOpen = true
+local savedScroll = nil
+local lockScroll = false
+
+local function doScrollTo(pos)
+    if not CON_SCR.Parent then return end
+    local target = pos
+    local start = CON_SCR.CanvasPosition
+    if (target - start).Magnitude > 1 then
+        local t0 = os.clock()
+        local conn
+        conn = RunService.RenderStepped:Connect(function()
+            if lockScroll then
+                if conn then conn:Disconnect() end
+                return
             end
+            local a = math.min((os.clock() - t0) / 0.18, 1)
+            local e = 1 - (1 - a) * (1 - a)
+            CON_SCR.CanvasPosition = start:Lerp(target, e)
+            if a >= 1 then
+                if conn then conn:Disconnect() end
+            end
+        end)
+    end
+end
+
+local function scrollToBottom()
+    if not isOpen then return end
+    if lockScroll then return end
+    task.defer(function()
+        if isOpen and not lockScroll and CON_SCR.Parent then
+            doScrollTo(Vector2.new(0, CON_SCR.AbsoluteCanvasSize.Y))
         end
     end)
 end
@@ -868,22 +889,32 @@ REOPEN_BTN.MouseLeave:Connect(function()
 end)
 
 local CLOSED = false
-local savedScroll = nil
 
 local function showWindow()
     REOPEN_BTN.Visible = false
     WIN.Visible = true
     WIN_SCALE.Scale = 0.9
+
+    isOpen = true
+    lockScroll = true
+
+    -- Fijar la posición guardada inmediatamente (invisible para el usuario)
+    if savedScroll and CON_SCR.Parent then
+        CON_SCR.CanvasPosition = savedScroll
+    end
+
     TW(WIN_SCALE, TI_POP, { Scale = 1 })
 
-    task.defer(function()
-        task.wait(0.05)
-        if not CON_SCR.Parent then return end
-        if savedScroll then
+    -- Después de la animación, fijar de nuevo por seguridad y liberar lock
+    task.spawn(function()
+        task.wait(0.35)
+        if not isOpen then return end
+        if savedScroll and CON_SCR.Parent then
             CON_SCR.CanvasPosition = savedScroll
-        else
-            CON_SCR.CanvasPosition = Vector2.new(0, CON_SCR.AbsoluteCanvasSize.Y)
         end
+        task.wait(0.1)
+        lockScroll = false
+        savedScroll = nil
     end)
 end
 
@@ -891,6 +922,7 @@ local function hideWindow()
     if CON_SCR.Parent then
         savedScroll = CON_SCR.CanvasPosition
     end
+    isOpen = false
 
     local t = TWc(WIN_SCALE, TI_FAST, { Scale = 0.9 })
     t.Completed:Connect(function()
