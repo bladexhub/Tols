@@ -16,6 +16,7 @@ local URL_THEME_LIGHT = "https://raw.githubusercontent.com/bladexhub/Tols/refs/h
 local ACTIVE_THEME = "dark"
 
 local ANIM_MAX_LINES = 10000
+local MAX_LINES = 20000
 
 local IGNORE_PATTERNS = {
     "^Failed to load animation",
@@ -85,15 +86,12 @@ local C = fetchTable(
 )
 
 local SET = {
-    MAX_LINES = 20000,
     DEFAULT_W = 620,
     DEFAULT_H = 420,
     MIN_W = 360,
     MIN_H = 240,
     RESIZE_EDGE = 26,
 }
-
-local MAX_LINES = SET.MAX_LINES
 
 local ICO = {
     chevron  = "chevron-right",
@@ -307,22 +305,38 @@ local CON_SCR = mk("ScrollingFrame", {
 vlist(CON_SCR, 2)
 pad(CON_SCR, 4, 4, 6, 6)
 
-local lineBuffer = {}
-local lineHead = 1
+local lineQueue = {}
+local lineHead  = 1
+local lineTail  = 0
 local lineTotal = 0
+local lineCounter = 0
 
 local function trackRow(row)
-    lineBuffer[lineHead] = row
-    lineHead = lineHead + 1
+    lineTail = lineTail + 1
+    lineQueue[lineTail] = row
     lineTotal = lineTotal + 1
-    if lineTotal > MAX_LINES then
-        local old = lineBuffer[lineHead - 1]
+    lineCounter = lineCounter + 1
+
+    while lineTotal > MAX_LINES do
+        local old = lineQueue[lineHead]
         if old then
-            old:Destroy()
-            lineBuffer[lineHead - 1] = nil
+            pcall(function() old:Destroy() end)
         end
+        lineQueue[lineHead] = nil
+        lineHead = lineHead + 1
         lineTotal = lineTotal - 1
-        if lineHead > MAX_LINES then lineHead = 1 end
+    end
+
+    if lineHead > 4096 then
+        local newQueue = {}
+        local j = 1
+        for i = lineHead, lineTail do
+            newQueue[j] = lineQueue[i]
+            j = j + 1
+        end
+        lineQueue = newQueue
+        lineTail = lineTail - lineHead + 1
+        lineHead = 1
     end
 end
 
@@ -352,7 +366,7 @@ local function addSpacer(height)
     local row = mk("Frame", {
         Size = UDim2.new(1, 0, 0, height),
         BackgroundTransparency = 1,
-        LayoutOrder = lineTotal + 1,
+        LayoutOrder = lineCounter + 1,
         ZIndex = 16,
     }, CON_SCR)
     trackRow(row)
@@ -363,7 +377,7 @@ end
 local function addLine(text, color, level, iconName, prefix)
     local row = mk("Frame", {
         Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1, LayoutOrder = lineTotal + 1, ZIndex = 16,
+        BackgroundTransparency = 1, LayoutOrder = lineCounter + 1, ZIndex = 16,
     }, CON_SCR)
 
     local textX = 0
@@ -459,17 +473,17 @@ local function getAnimProfile(total)
     if total > ANIM_MAX_LINES then
         return { batch = total, delay = 0 }
     elseif total > 3000 then
-        return { batch = math.max(1, math.ceil(total / 30)), delay = 0.05 }
+        return { batch = math.max(1, math.ceil(total / 8)), delay = 0.01 }
     elseif total > 1000 then
-        return { batch = math.max(1, math.ceil(total / 40)), delay = 0.05 }
+        return { batch = math.max(1, math.ceil(total / 10)), delay = 0.01 }
     elseif total > 500 then
-        return { batch = math.max(1, math.ceil(total / 50)), delay = 0.04 }
+        return { batch = math.max(1, math.ceil(total / 12)), delay = 0.008 }
     elseif total > 200 then
-        return { batch = 2, delay = 0.02 }
+        return { batch = 6, delay = 0.006 }
     elseif total > 80 then
-        return { batch = 1, delay = 0.018 }
+        return { batch = 4, delay = 0.005 }
     else
-        return { batch = 1, delay = 0.028 }
+        return { batch = 3, delay = 0.008 }
     end
 end
 
@@ -745,13 +759,14 @@ for _, h in ipairs(cornerHandles) do
         Size = UDim2.new(0, RESIZE_EDGE, 0, RESIZE_EDGE),
         Position = UDim2.new(h.px, h.dx == 1 and -RESIZE_EDGE or 0,
                              h.py, h.dy == 1 and -RESIZE_EDGE or 0),
-        BackgroundTransparency = 1, ZIndex = 80, Active = true,
+        BackgroundTransparency = 1,
+        ZIndex = 10,
+        Active = true,
     }, WIN)
     hf.InputBegan:Connect(function(inp, gp)
         if gp then return end
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
-            -- ⬇ Bloquear resize si el clic cae sobre los botones de la barra de título
             local px, py = inp.Position.X, inp.Position.Y
             if pointInGui(CLOSE_BTN, px, py) then return end
             if pointInGui(MINI_BTN, px, py) then return end
