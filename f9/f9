@@ -1,0 +1,925 @@
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local LogService = game:GetService("LogService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local LP = Players.LocalPlayer
+local PGui = LP:WaitForChild("PlayerGui", 10)
+
+local URL_ICONS   = "https://raw.githubusercontent.com/BladexDevX/loader/refs/heads/main/Icons%20bladex.lua"
+local URL_LOADER  = "https://raw.githubusercontent.com/BladexDevX/loader/refs/heads/main/loader"
+
+local URL_THEME_DARK  = "https://raw.githubusercontent.com/bladexhub/Tols/refs/heads/main/f9/config%20settings"
+local URL_THEME_LIGHT = "https://raw.githubusercontent.com/bladexhub/Tols/refs/heads/main/f9/theme%20light"
+
+local ACTIVE_THEME = "dark"
+
+local ANIM_MAX_LINES = 10000
+
+local IGNORE_PATTERNS = {
+    "^Failed to load animation",
+    "^Animation failed to load",
+    "^Unable to load",
+    "^HTTP Request",
+    "^Failed to load",
+    "^Sound .- failed",
+    "^Image .- failed",
+}
+
+local function shouldIgnore(msg)
+    for _, pat in ipairs(IGNORE_PATTERNS) do
+        if msg:match(pat) then return true end
+    end
+    return false
+end
+
+local function fetch(url)
+    local ok, res = pcall(game.HttpGet, game, url)
+    if ok and type(res) == "string" and #res > 0 then
+        return res
+    end
+    warn("[Bladex] No se pudo descargar: " .. url)
+    return nil
+end
+
+local function fetchTable(url)
+    local code = fetch(url)
+    if not code then return nil end
+    local fn, err = loadstring(code)
+    if not fn then
+        warn("[Bladex] Syntax error: " .. tostring(err))
+        return nil
+    end
+    local ok, res = pcall(fn)
+    if not ok or type(res) ~= "table" then
+        warn("[Bladex] No devolvió tabla: " .. url)
+        return nil
+    end
+    return res
+end
+
+local function fetchFunc(url)
+    local code = fetch(url)
+    if not code then return nil end
+    local fn, err = loadstring(code)
+    if not fn then
+        warn("[Bladex] Syntax error: " .. tostring(err))
+        return nil
+    end
+    return fn
+end
+
+local RBX_ICONS = fetchTable(URL_ICONS)
+
+local IconLoader = nil
+local loaderThread = task.spawn(function()
+    local fn = fetchFunc(URL_LOADER)
+    if not fn then return end
+    local ok, res = pcall(fn)
+    if ok and type(res) == "table" then IconLoader = res end
+end)
+
+local C = fetchTable(
+    ACTIVE_THEME == "light" and URL_THEME_LIGHT or URL_THEME_DARK
+)
+
+local SET = {
+    MAX_LINES = 20000,
+    DEFAULT_W = 620,
+    DEFAULT_H = 420,
+    MIN_W = 360,
+    MIN_H = 240,
+    RESIZE_EDGE = 26,
+}
+
+local MAX_LINES = SET.MAX_LINES
+
+local ICO = {
+    chevron  = "chevron-right",
+    error    = "x",
+    warn     = "alert-triangle",
+    info     = "info",
+    check    = "check",
+    ret      = "corner-down-left",
+    logo     = "bladex-hud-logo",
+    gamepad  = "gamepad-2",
+}
+
+if not C then
+    warn("[Bladex] El tema no se cargó. Abortando.")
+    return
+end
+
+local iconCache = {}
+local function getIcon(name)
+    if not name then return nil end
+    if RBX_ICONS and RBX_ICONS[name] then return RBX_ICONS[name] end
+    if not IconLoader then return nil end
+    if iconCache[name] ~= nil then return iconCache[name] or nil end
+    local ok, id = pcall(IconLoader.GetAny, {"lucide","solar","gravity","sfsymbols"}, name)
+    if ok and id then iconCache[name] = id; return id end
+    iconCache[name] = false
+    return nil
+end
+
+local iconSlots = {}
+local function applyIcon(holder, name, color, keepColor)
+    local id = getIcon(name)
+    if not id then return false end
+    holder:ClearAllChildren()
+    local img = Instance.new("ImageLabel")
+    img.Image = id
+    if keepColor then
+        img.ImageColor3 = Color3.fromRGB(255,255,255)
+    else
+        img.ImageColor3 = color or Color3.new(1,1,1)
+    end
+    img.BackgroundTransparency = 1
+    img.ScaleType = Enum.ScaleType.Fit
+    img.Size = UDim2.new(1, 0, 1, 0)
+    img.Parent = holder
+    return true
+end
+
+local function mkIcon(name, size, color, parent, keepColor)
+    local holder = Instance.new("Frame")
+    holder.BackgroundTransparency = 1
+    holder.Size = UDim2.new(0, size, 0, size)
+    holder.Parent = parent
+    if not applyIcon(holder, name, color, keepColor) then
+        iconSlots[#iconSlots + 1] = {holder = holder, name = name, color = color, keepColor = keepColor}
+    end
+    return holder
+end
+
+task.spawn(function()
+    for _ = 1, 40 do
+        if IconLoader then break end
+        task.wait(0.5)
+    end
+    if not IconLoader then return end
+    for _, slot in ipairs(iconSlots) do
+        if slot.holder and slot.holder.Parent then
+            applyIcon(slot.holder, slot.name, slot.color, slot.keepColor)
+        end
+    end
+    iconSlots = {}
+end)
+
+local function mk(cls, props, parent)
+    local o = Instance.new(cls)
+    for k, v in pairs(props) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
+local function corner(p, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 6); c.Parent = p; return c end
+local function stroke(p, col, th) local s = Instance.new("UIStroke"); s.Color = col; s.Thickness = th or 1; s.Parent = p; return s end
+local function pad(p, t, b, l, r)
+    local u = Instance.new("UIPadding")
+    u.PaddingTop = UDim.new(0, t); u.PaddingBottom = UDim.new(0, b)
+    u.PaddingLeft = UDim.new(0, l); u.PaddingRight = UDim.new(0, r)
+    u.Parent = p
+end
+local function vlist(p, sp)
+    local l = Instance.new("UIListLayout")
+    l.FillDirection = Enum.FillDirection.Vertical
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Padding = UDim.new(0, sp or 0); l.Parent = p
+end
+
+local TI_FAST = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_POP  = TweenInfo.new(0.30, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
+local TI_SOFT = TweenInfo.new(0.20, Enum.EasingStyle.Sine,  Enum.EasingDirection.Out)
+
+local function TW(o, ti, pr) return TweenService:Create(o, ti, pr):Play() end
+local function TWc(o, ti, pr)
+    local t = TweenService:Create(o, ti, pr)
+    t:Play()
+    return t
+end
+
+for _, g in ipairs({CoreGui, PGui}) do
+    for _, nm in ipairs({"__DexRoot","__DexGui","DarkDexV3","DarkDex","__F9Gui"}) do
+        local o = g:FindFirstChild(nm); if o then o:Destroy() end
+    end
+end
+local ROOT = PGui
+pcall(function() ROOT = CoreGui end)
+
+local GUI = mk("ScreenGui", {
+    Name = "__DexRoot", ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset = true, DisplayOrder = 9990,
+}, ROOT)
+
+local vp = workspace.CurrentCamera.ViewportSize
+local initW = math.min(SET.DEFAULT_W, vp.X - 16)
+local initH = math.min(SET.DEFAULT_H, vp.Y - 40)
+local initX = math.max(0, math.floor((vp.X - initW) / 2))
+local initY = math.max(0, math.floor((vp.Y - initH) / 2))
+
+local WIN = mk("Frame", {
+    Name = "MainWindow",
+    Size = UDim2.new(0, initW, 0, initH),
+    Position = UDim2.new(0, initX, 0, initY),
+    BackgroundColor3 = C.WIN, BorderSizePixel = 0,
+    ClipsDescendants = true, ZIndex = 5, Active = true,
+}, GUI)
+corner(WIN, 16); stroke(WIN, C.WBRD, 1.5)
+
+local WIN_SCALE = Instance.new("UIScale", WIN)
+WIN_SCALE.Scale = 1
+
+local TB = mk("Frame", {
+    Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.HDR2,
+    BorderSizePixel = 0, ZIndex = 20, Active = true,
+}, WIN)
+corner(TB, 16)
+mk("Frame", {Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
+    BackgroundColor3 = C.HDR2, BorderSizePixel = 0, ZIndex = 19}, TB)
+mk("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
+    BackgroundColor3 = C.DIV, BorderSizePixel = 0, ZIndex = 21}, TB)
+
+local titleIco = mkIcon(ICO.logo, 20, C.TXTW, TB, true)
+titleIco.Position = UDim2.new(0, 10, 0.5, -10)
+titleIco.ZIndex = 21
+titleIco.Active = false
+
+mk("TextLabel", {Text = "BLADEX HUD", TextColor3 = C.TXTW, Font = Enum.Font.Gotham,
+    TextSize = 12, BackgroundTransparency = 1, Size = UDim2.new(0, 110, 1, 0),
+    Position = UDim2.new(0, 38, 0, 0), TextYAlignment = Enum.TextYAlignment.Center,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21, Active = false}, TB)
+
+local function titleBtn(iconName, bg, xOff)
+    local b = mk("TextButton", {Text = "", BackgroundColor3 = bg,
+        Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, xOff, 0.5, 0),
+        AnchorPoint = Vector2.new(1, 0.5), BorderSizePixel = 0, ZIndex = 90,
+        AutoButtonColor = false, Active = true}, TB)
+    corner(b, 4)
+    local bScale = Instance.new("UIScale", b)
+    bScale.Scale = 1
+    local ic = mkIcon(iconName, 14, C.TXTW, b, true)
+    ic.Position = UDim2.new(0.5, -7, 0.5, -7)
+    ic.ZIndex = 91
+    ic.Active = false
+    b.MouseEnter:Connect(function()
+        if b.Parent then
+            TW(b, TI_FAST, { BackgroundTransparency = 0.25 })
+            TW(bScale, TI_POP, { Scale = 1.12 })
+        end
+    end)
+    b.MouseLeave:Connect(function()
+        if b.Parent then
+            TW(b, TI_SOFT, { BackgroundTransparency = 0 })
+            TW(bScale, TI_SOFT, { Scale = 1 })
+        end
+    end)
+    b.MouseButton1Down:Connect(function()
+        if b.Parent then TW(bScale, TI_FAST, { Scale = 0.92 }) end
+    end)
+    b.MouseButton1Up:Connect(function()
+        if b.Parent then TW(bScale, TI_POP, { Scale = 1.12 }) end
+    end)
+    return b
+end
+local CLOSE_BTN = titleBtn("x", C.CLOSE, -6)
+local MINI_BTN = titleBtn("minus", C.MINI, -38)
+
+local CONTENT = mk("Frame", {
+    Size = UDim2.new(1, 0, 1, -36), Position = UDim2.new(0, 0, 0, 36),
+    BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 15,
+}, WIN)
+
+local CON_OUT_BOX = mk("Frame", {
+    Size = UDim2.new(1, -20, 1, -62), Position = UDim2.new(0, 10, 0, 10),
+    BackgroundColor3 = C.CON_INP, BorderSizePixel = 0, ZIndex = 15,
+}, CONTENT)
+corner(CON_OUT_BOX, 6); stroke(CON_OUT_BOX, C.CON_BRD, 1)
+
+local CON_SCR = mk("ScrollingFrame", {
+    Size = UDim2.new(1, -8, 1, -8), Position = UDim2.new(0, 4, 0, 4),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 4, ScrollBarImageColor3 = Color3.fromRGB(80,80,80),
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ZIndex = 15,
+}, CON_OUT_BOX)
+vlist(CON_SCR, 2)
+pad(CON_SCR, 4, 4, 6, 6)
+
+local lineBuffer = {}
+local lineHead = 1
+local lineTotal = 0
+
+local function trackRow(row)
+    lineBuffer[lineHead] = row
+    lineHead = lineHead + 1
+    lineTotal = lineTotal + 1
+    if lineTotal > MAX_LINES then
+        local old = lineBuffer[lineHead - 1]
+        if old then
+            old:Destroy()
+            lineBuffer[lineHead - 1] = nil
+        end
+        lineTotal = lineTotal - 1
+        if lineHead > MAX_LINES then lineHead = 1 end
+    end
+end
+
+local function scrollToBottom()
+    task.defer(function()
+        if CON_SCR.Parent then
+            local target = Vector2.new(0, CON_SCR.AbsoluteCanvasSize.Y)
+            local start = CON_SCR.CanvasPosition
+            if (target - start).Magnitude > 1 then
+                local t0 = os.clock()
+                local conn
+                conn = RunService.RenderStepped:Connect(function()
+                    local a = math.min((os.clock() - t0) / 0.18, 1)
+                    local e = 1 - (1 - a) * (1 - a)
+                    CON_SCR.CanvasPosition = start:Lerp(target, e)
+                    if a >= 1 then
+                        if conn then conn:Disconnect() end
+                    end
+                end)
+            end
+        end
+    end)
+end
+
+local function addSpacer(height)
+    height = height or 6
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, height),
+        BackgroundTransparency = 1,
+        LayoutOrder = lineTotal + 1,
+        ZIndex = 16,
+    }, CON_SCR)
+    trackRow(row)
+    scrollToBottom()
+    return row
+end
+
+local function addLine(text, color, level, iconName, prefix)
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = lineTotal + 1, ZIndex = 16,
+    }, CON_SCR)
+
+    local textX = 0
+    local textSizeX = UDim2.new(1, 0, 0, 0)
+
+    if prefix then
+        mk("TextLabel", {
+            Text = prefix,
+            TextColor3 = C.LINENUM,
+            Font = Enum.Font.Code, TextSize = 11,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, 40, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            Position = UDim2.new(0, 0, 0, 0),
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 16, Active = false,
+        }, row)
+        mk("TextLabel", {
+            Text = "|",
+            TextColor3 = C.LINEDIV,
+            Font = Enum.Font.Code, TextSize = 11,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, 8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            Position = UDim2.new(0, 42, 0, 0),
+            TextXAlignment = Enum.TextXAlignment.Center,
+            ZIndex = 16, Active = false,
+        }, row)
+        textX = 54
+        textSizeX = UDim2.new(1, -54, 0, 0)
+    end
+
+    if iconName then
+        local ic = mkIcon(iconName, 11, color or C.CON_TXT, row)
+        ic.Position = UDim2.new(0, textX, 0, 2)
+        ic.ZIndex = 16
+        ic.Active = false
+        textX = textX + 16
+        textSizeX = UDim2.new(1, -textX, 0, 0)
+    end
+
+    local lbl = mk("TextLabel", {
+        Size = textSizeX, Position = UDim2.new(0, textX, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, Text = text,
+        TextColor3 = color or C.CON_TXT, TextSize = 11, Font = Enum.Font.Code,
+        TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
+        ZIndex = 16, Active = false,
+    }, row)
+    lbl:SetAttribute("level", level or "info")
+
+    local rowFade = Instance.new("UIScale", row)
+    rowFade.Scale = 0.96
+    TW(rowFade, TI_SOFT, { Scale = 1 })
+
+    trackRow(row)
+    scrollToBottom()
+    return row
+end
+
+local function highlightLine(row, color)
+    if not row or not row.Parent then return end
+    if row:FindFirstChild("__hl") then return end
+    local bg = Instance.new("Frame")
+    bg.Name = "__hl"
+    bg.Size = UDim2.new(1, 8, 1, 0)
+    bg.Position = UDim2.new(0, -4, 0, 0)
+    bg.BackgroundColor3 = color
+    bg.BackgroundTransparency = 0.82
+    bg.BorderSizePixel = 0
+    bg.ZIndex = 15
+    bg.Parent = row
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 3)
+    c.Parent = bg
+end
+
+local function parseError(err)
+    if type(err) ~= "string" then return { msg = tostring(err) } end
+    local clean = err
+    local line
+    local l = clean:match(":(%d+):")
+    if l then line = tonumber(l) end
+    clean = clean:gsub("^.-:%d+:%s*", "")
+    clean = clean:gsub("\nStack Begin.*", "")
+    clean = clean:gsub("\nstack traceback:.*", "")
+    return {
+        line = line,
+        msg = clean,
+        raw = err,
+    }
+end
+
+local function getAnimProfile(total)
+    if total > ANIM_MAX_LINES then
+        return { batch = total, delay = 0 }
+    elseif total > 3000 then
+        return { batch = math.max(1, math.ceil(total / 30)), delay = 0.05 }
+    elseif total > 1000 then
+        return { batch = math.max(1, math.ceil(total / 40)), delay = 0.05 }
+    elseif total > 500 then
+        return { batch = math.max(1, math.ceil(total / 50)), delay = 0.04 }
+    elseif total > 200 then
+        return { batch = 2, delay = 0.02 }
+    elseif total > 80 then
+        return { batch = 1, delay = 0.018 }
+    else
+        return { batch = 1, delay = 0.028 }
+    end
+end
+
+local function peekCode(code)
+    addSpacer(6)
+    local refs = {}
+    local lines = {}
+    for line in (code .. "\n"):gmatch("([^\n]*)\n") do
+        table.insert(lines, line)
+    end
+    local total = #lines
+
+    local profile = getAnimProfile(total)
+    local batch = profile.batch
+    local delay = profile.delay
+
+    local i = 0
+    while i < total do
+        for _ = 1, batch do
+            i = i + 1
+            if i > total then break end
+            refs[i] = addLine(lines[i], C.CON_CMD, "info", nil, tostring(i) .. "-")
+        end
+        if delay > 0 and i < total then
+            task.wait(delay)
+        end
+    end
+
+    addSpacer(6)
+    return refs
+end
+
+local INPUT_ROW = mk("Frame", {
+    Size = UDim2.new(1, -20, 0, 34), Position = UDim2.new(0, 10, 1, -44),
+    BackgroundTransparency = 1, ZIndex = 15,
+}, CONTENT)
+
+local promptIco = mkIcon(ICO.chevron, 12, C.CON_TXT, INPUT_ROW)
+promptIco.Position = UDim2.new(0, 2, 0.5, -6)
+promptIco.ZIndex = 15
+promptIco.Active = false
+
+local INPUT_BG = mk("Frame", {
+    Size = UDim2.new(1, -100, 1, 0), Position = UDim2.new(0, 20, 0, 0),
+    BackgroundColor3 = C.CON_INP, BorderSizePixel = 0, ZIndex = 15,
+}, INPUT_ROW)
+corner(INPUT_BG, 6); local inputStroke = stroke(INPUT_BG, C.CON_BRD, 1)
+
+local INPUT = mk("TextBox", {
+    Size = UDim2.new(1, -16, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+    BackgroundTransparency = 1,
+    PlaceholderText = "Execute Lua...",
+    PlaceholderColor3 = C.TXTD, Text = "", TextColor3 = C.CON_TXT,
+    Font = Enum.Font.Code, TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
+    ZIndex = 16,
+}, INPUT_BG)
+
+INPUT.Focused:Connect(function()
+    TW(inputStroke, TI_SOFT, { Color = C.BLUE, Thickness = 1.5 })
+end)
+INPUT.FocusLost:Connect(function(enter)
+    TW(inputStroke, TI_SOFT, { Color = C.CON_BRD, Thickness = 1 })
+    if enter then
+        local c = INPUT.Text; INPUT.Text = ""; exec(c)
+    end
+end)
+
+local RUN_BTN = mk("TextButton", {
+    Text = "", BackgroundColor3 = Color3.fromRGB(20,80,34),
+    BorderSizePixel = 0, AutoButtonColor = false,
+    Size = UDim2.new(0, 70, 1, 0), Position = UDim2.new(1, -70, 0, 0),
+    ZIndex = 15,
+}, INPUT_ROW)
+corner(RUN_BTN, 6); stroke(RUN_BTN, C.GREEN, 1.2)
+local runScale = Instance.new("UIScale", RUN_BTN)
+runScale.Scale = 1
+
+local runIco = mkIcon("play", 14, C.TXTW, RUN_BTN)
+runIco.Position = UDim2.new(0, 10, 0.5, -7)
+runIco.ZIndex = 16
+runIco.Active = false
+
+mk("TextLabel", {
+    Text = "Run", TextColor3 = C.TXTW,
+    Font = Enum.Font.GothamBold, TextSize = 12,
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 28, 0, 0),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 16, Active = false,
+}, RUN_BTN)
+
+RUN_BTN.MouseEnter:Connect(function()
+    if RUN_BTN.Parent then
+        TW(RUN_BTN, TI_FAST, { BackgroundColor3 = Color3.fromRGB(32,110,48) })
+        TW(runScale, TI_POP, { Scale = 1.05 })
+    end
+end)
+RUN_BTN.MouseLeave:Connect(function()
+    if RUN_BTN.Parent then
+        TW(RUN_BTN, TI_SOFT, { BackgroundColor3 = Color3.fromRGB(20,80,34) })
+        TW(runScale, TI_SOFT, { Scale = 1 })
+    end
+end)
+RUN_BTN.MouseButton1Down:Connect(function()
+    if RUN_BTN.Parent then TW(runScale, TI_FAST, { Scale = 0.95 }) end
+end)
+RUN_BTN.MouseButton1Up:Connect(function()
+    if RUN_BTN.Parent then TW(runScale, TI_POP, { Scale = 1.05 }) end
+end)
+
+local history = {}
+local histIdx = 0
+
+function exec(code)
+    if not code or code:match("^%s*$") then return end
+    table.insert(history, 1, code)
+    if #history > 60 then table.remove(history) end
+    histIdx = 0
+
+    local refs = peekCode(code)
+
+    local fn, synErr = loadstring(code)
+    if not fn then
+        local info = parseError(synErr)
+        local head = "Syntax error"
+        if info.line then head = head .. " (línea " .. info.line .. ")" end
+        addLine(head .. ": " .. info.msg, C.CON_ERR, "err", ICO.error)
+        if info.line and refs[info.line] then
+            highlightLine(refs[info.line], C.CON_ERR)
+        end
+        return
+    end
+
+    local ok, result = xpcall(fn, function(e)
+        return debug.traceback(tostring(e), 2)
+    end)
+
+    if not ok then
+        local info = parseError(result)
+        local head = "Error"
+        if info.line then head = head .. " (línea " .. info.line .. ")" end
+        addLine(head .. ": " .. info.msg, C.CON_ERR, "err", ICO.error)
+        if info.line and refs[info.line] then
+            highlightLine(refs[info.line], C.CON_ERR)
+        end
+        local stackLine = tostring(result):match("Script '.-', Line %d+")
+        if stackLine then
+            addLine("  ↳ " .. stackLine, C.CON_ERR, "err", nil)
+        end
+    elseif result ~= nil then
+        addLine(tostring(result), C.CON_RET, "ok", ICO.ret)
+    else
+        addLine("Done", C.CON_OK, "ok", ICO.check)
+    end
+end
+
+RUN_BTN.MouseButton1Click:Connect(function()
+    local c = INPUT.Text; INPUT.Text = ""; exec(c)
+end)
+
+INPUT.InputBegan:Connect(function(inp)
+    if inp.KeyCode == Enum.KeyCode.Up then
+        histIdx = math.min(histIdx + 1, #history)
+        INPUT.Text = history[histIdx] or ""
+        task.defer(function() INPUT.CursorPosition = #INPUT.Text + 1 end)
+    elseif inp.KeyCode == Enum.KeyCode.Down then
+        histIdx = math.max(histIdx - 1, 0)
+        INPUT.Text = history[histIdx] or ""
+        task.defer(function() INPUT.CursorPosition = #INPUT.Text + 1 end)
+    end
+end)
+
+local logConn = LogService.MessageOut:Connect(function(msg, t)
+    if shouldIgnore(msg) then return end
+
+    local color, level, icoName = C.CON_TXT, "info", nil
+    if t == Enum.MessageType.MessageError then
+        color, level, icoName = C.CON_ERR, "err", ICO.error
+    elseif t == Enum.MessageType.MessageWarning then
+        color, level, icoName = C.CON_WRN, "warn", ICO.warn
+    elseif t == Enum.MessageType.MessageInfo then
+        color, level, icoName = C.CON_INF, "info", ICO.info
+    end
+    addLine(msg, color, level, icoName)
+end)
+
+local connections = {logConn}
+
+local dragging, dragStart, winStart = false, nil, nil
+local resizing, activeHandle = false, nil
+local resizeStart, resizeWinPos, resizeWinSize = nil, nil, nil
+
+local function pointInGui(obj, px, py)
+    if not obj or not obj.Parent then return false end
+    local ap = obj.AbsolutePosition
+    local as = obj.AbsoluteSize
+    return px >= ap.X and px <= ap.X + as.X
+       and py >= ap.Y and py <= ap.Y + as.Y
+end
+
+local function isOverUI(px, py)
+    if pointInGui(CLOSE_BTN, px, py) then return true end
+    if pointInGui(MINI_BTN, px, py) then return true end
+    if pointInGui(INPUT_ROW, px, py) then return true end
+    if pointInGui(INPUT, px, py) then return true end
+    if pointInGui(RUN_BTN, px, py) then return true end
+    if pointInGui(CON_SCR, px, py) then return true end
+    return false
+end
+
+local function startDrag(pos)
+    dragging = true
+    dragStart = pos
+    winStart = WIN.Position
+    TW(WIN_SCALE, TI_FAST, { Scale = 1.01 })
+end
+local function updateDrag(pos)
+    if not dragging then return end
+    local d = pos - dragStart
+    local v = workspace.CurrentCamera.ViewportSize
+    local nx = math.max(0, math.min(winStart.X.Offset + d.X, v.X - 100))
+    local ny = math.max(0, math.min(winStart.Y.Offset + d.Y, v.Y - 40))
+    WIN.Position = UDim2.new(0, nx, 0, ny)
+end
+local function stopDrag()
+    dragging = false; dragStart = nil; winStart = nil
+    TW(WIN_SCALE, TI_SOFT, { Scale = 1 })
+end
+
+connections[#connections + 1] = TB.InputBegan:Connect(function(inp, gp)
+    if gp then return end
+    if inp.UserInputType ~= Enum.UserInputType.MouseButton1
+    and inp.UserInputType ~= Enum.UserInputType.Touch then return end
+    if isOverUI(inp.Position.X, inp.Position.Y) then return end
+    startDrag(Vector2.new(inp.Position.X, inp.Position.Y))
+end)
+
+connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
+    if dragging then
+        if inp.UserInputType == Enum.UserInputType.MouseMovement
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            updateDrag(Vector2.new(inp.Position.X, inp.Position.Y))
+        end
+    end
+end)
+
+connections[#connections + 1] = UIS.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1
+    or inp.UserInputType == Enum.UserInputType.Touch then
+        if dragging then stopDrag() end
+        if resizing then
+            resizing = false
+            activeHandle = nil
+            resizeStart = nil; resizeWinPos = nil; resizeWinSize = nil
+            TW(WIN_SCALE, TI_SOFT, { Scale = 1 })
+        end
+    end
+end)
+
+local RESIZE_EDGE = SET.RESIZE_EDGE
+
+local cornerHandles = {
+    {name = "TL", px = 0, py = 0, dx = -1, dy = -1},
+    {name = "TR", px = 1, py = 0, dx =  1, dy = -1},
+    {name = "BL", px = 0, py = 1, dx = -1, dy =  1},
+    {name = "BR", px = 1, py = 1, dx =  1, dy =  1},
+}
+
+for _, h in ipairs(cornerHandles) do
+    local hf = mk("Frame", {
+        Name = "Rsz_" .. h.name,
+        Size = UDim2.new(0, RESIZE_EDGE, 0, RESIZE_EDGE),
+        Position = UDim2.new(h.px, h.dx == 1 and -RESIZE_EDGE or 0,
+                             h.py, h.dy == 1 and -RESIZE_EDGE or 0),
+        BackgroundTransparency = 1, ZIndex = 80, Active = true,
+    }, WIN)
+    hf.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            activeHandle = h
+            resizing = true
+            resizeStart = Vector2.new(inp.Position.X, inp.Position.Y)
+            resizeWinPos = WIN.Position
+            resizeWinSize = WIN.Size
+            TW(WIN_SCALE, TI_FAST, { Scale = 1.015 })
+        end
+    end)
+end
+
+local function updateResize(pos)
+    if not resizing or not activeHandle then return end
+    local d = pos - resizeStart
+    local vp = workspace.CurrentCamera.ViewportSize
+    local W = resizeWinSize.X.Offset
+    local H = resizeWinSize.Y.Offset
+    local PX = resizeWinPos.X.Offset
+    local PY = resizeWinPos.Y.Offset
+    local nW, nH, nPX, nPY = W, H, PX, PY
+
+    if activeHandle.dx == 1 then
+        nW = math.min(math.max(SET.MIN_W, W + d.X), vp.X - PX)
+    elseif activeHandle.dx == -1 then
+        local dw = math.min(d.X, W - SET.MIN_W)
+        nW = W - dw
+        nPX = math.max(0, PX + dw)
+    end
+    if activeHandle.dy == 1 then
+        nH = math.min(math.max(SET.MIN_H, H + d.Y), vp.Y - PY)
+    elseif activeHandle.dy == -1 then
+        local dh = math.min(d.Y, H - SET.MIN_H)
+        nH = H - dh
+        nPY = math.max(0, PY + dh)
+    end
+    WIN.Size = UDim2.new(0, nW, 0, nH)
+    WIN.Position = UDim2.new(0, nPX, 0, nPY)
+end
+
+connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
+    if not resizing or not activeHandle then return end
+    if inp.UserInputType == Enum.UserInputType.MouseMovement
+    or inp.UserInputType == Enum.UserInputType.Touch then
+        updateResize(Vector2.new(inp.Position.X, inp.Position.Y))
+    end
+end)
+
+local REOPEN_BTN = mk("TextButton", {
+    Name = "F9_Btn",
+    Text = "",
+    BackgroundColor3 = C.F9BG,
+    BackgroundTransparency = 0,
+    Size = UDim2.new(0, 90, 0, 30),
+    Position = UDim2.new(0, 8, 0, 8),
+    Visible = false,
+    BorderSizePixel = 0,
+    AutoButtonColor = false,
+    ZIndex = 200,
+}, GUI)
+corner(REOPEN_BTN, 10)
+stroke(REOPEN_BTN, C.BLUE, 1.5)
+
+local reopenIcon = mkIcon(ICO.gamepad, 16, C.TXTW, REOPEN_BTN, true)
+reopenIcon.Position = UDim2.new(0, 8, 0.5, -8)
+reopenIcon.ZIndex = 201
+reopenIcon.Active = false
+
+mk("TextLabel", {
+    Text = "F9",
+    TextColor3 = C.TXTW,
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -30, 1, 0),
+    Position = UDim2.new(0, 30, 0, 0),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 201,
+}, REOPEN_BTN)
+
+local reopenScale = Instance.new("UIScale", REOPEN_BTN)
+local pulseTween = TweenService:Create(reopenScale,
+    TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+    { Scale = 1.07 })
+pulseTween:Play()
+
+REOPEN_BTN.MouseEnter:Connect(function()
+    if REOPEN_BTN.Parent then
+        TW(REOPEN_BTN, TI_FAST, { BackgroundTransparency = 0.25 })
+    end
+end)
+REOPEN_BTN.MouseLeave:Connect(function()
+    if REOPEN_BTN.Parent then
+        TW(REOPEN_BTN, TI_SOFT, { BackgroundTransparency = 0 })
+    end
+end)
+
+local CLOSED = false
+
+local function showWindow()
+    REOPEN_BTN.Visible = false
+    WIN.Visible = true
+    WIN_SCALE.Scale = 0.9
+    TW(WIN_SCALE, TI_POP, { Scale = 1 })
+end
+
+local function hideWindow()
+    local t = TWc(WIN_SCALE, TI_FAST, { Scale = 0.9 })
+    t.Completed:Connect(function()
+        if WIN and WIN.Parent and not CLOSED then
+            WIN.Visible = false
+            WIN_SCALE.Scale = 1
+            REOPEN_BTN.Visible = true
+        end
+    end)
+end
+
+local function shutdown()
+    if CLOSED then return end
+    CLOSED = true
+
+    dragging = false
+    resizing = false
+    activeHandle = nil
+    dragStart, winStart = nil, nil
+    resizeStart, resizeWinPos, resizeWinSize = nil, nil, nil
+
+    for _, conn in ipairs(connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    connections = {}
+
+    pcall(function()
+        if loaderThread then task.cancel(loaderThread) end
+    end)
+
+    pcall(function()
+        if GUI and GUI.Parent then GUI:Destroy() end
+    end)
+end
+
+CLOSE_BTN.MouseButton1Click:Connect(function()
+    local t = TWc(WIN_SCALE, TI_FAST, { Scale = 0.85 })
+    t.Completed:Connect(function()
+        shutdown()
+    end)
+end)
+
+MINI_BTN.MouseButton1Click:Connect(function()
+    if CLOSED then return end
+    hideWindow()
+end)
+
+REOPEN_BTN.MouseButton1Click:Connect(function()
+    if CLOSED then return end
+    showWindow()
+end)
+
+connections[#connections + 1] = UIS.InputBegan:Connect(function(inp, gp)
+    if gp then return end
+    if inp.KeyCode == Enum.KeyCode.F9 then
+        if not CLOSED and WIN and WIN.Parent then
+            if WIN.Visible then
+                hideWindow()
+            else
+                showWindow()
+            end
+        end
+    end
+end)
+
+addLine("codigo", C.CON_SYS, "info", ICO.chevron)
+
+return true
