@@ -192,7 +192,7 @@ local TI_FAST = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection
 local TI_POP  = TweenInfo.new(0.30, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
 local TI_SOFT = TweenInfo.new(0.20, Enum.EasingStyle.Sine,  Enum.EasingDirection.Out)
 
-local function TW(o, ti, pr) return TweenService:Create(o, ti, pr):Play() end
+local function TW(o, ti, pr) TweenService:Create(o, ti, pr):Play() end
 local function TWc(o, ti, pr)
     local t = TweenService:Create(o, ti, pr)
     t:Play()
@@ -751,6 +751,12 @@ for _, h in ipairs(cornerHandles) do
         if gp then return end
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
+            -- ⬇ Bloquear resize si el clic cae sobre los botones de la barra de título
+            local px, py = inp.Position.X, inp.Position.Y
+            if pointInGui(CLOSE_BTN, px, py) then return end
+            if pointInGui(MINI_BTN, px, py) then return end
+            if pointInGui(TB, px, py) then return end
+
             activeHandle = h
             resizing = true
             resizeStart = Vector2.new(inp.Position.X, inp.Position.Y)
