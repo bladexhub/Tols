@@ -1,4 +1,15 @@
---particles
+-- Particles remoto — requiere getgenv().__BLADEX con UI, State, Events, new, corner
+local ENV = getgenv().__BLADEX
+if not ENV then error("[Particles] __BLADEX no disponible.") end
+
+local UI          = ENV.UI
+local State       = ENV.State
+local Events      = ENV.Events
+local new         = ENV.new
+local corner      = ENV.corner
+
+local RunService  = game:GetService("RunService")
+
 local Particles = {}
 Particles.__index = Particles
 
@@ -23,21 +34,21 @@ function Particles.new(parent, w, h, count, color)
     self._fpsWarned   = false
 
     self.canvas = new("Frame", {
-        Size                  = UDim2.new(1, 0, 1, 0),
+        Size                   = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
-        ClipsDescendants      = true,
-        ZIndex                = 1,
+        ClipsDescendants       = true,
+        ZIndex                 = 1,
     }, parent)
     self.canvas.Name = "ParticleCanvas"
     corner(self.canvas, UI.Dim.radius)
 
     for i = 1, count do
         local dot = new("Frame", {
-            Size               = UDim2.fromOffset(self.size, self.size),
-            BackgroundColor3   = color,
+            Size                   = UDim2.fromOffset(self.size, self.size),
+            BackgroundColor3       = color,
             BackgroundTransparency = math.clamp(0.35 - self.intensity * 0.3, 0.05, 0.75),
-            BorderSizePixel    = 0,
-            ZIndex             = 1,
+            BorderSizePixel        = 0,
+            ZIndex                 = 1,
         }, self.canvas)
         corner(dot, 2)
         dot.Position = UDim2.fromOffset(math.random(0, w), math.random(0, h))
@@ -52,11 +63,11 @@ function Particles.new(parent, w, h, count, color)
 
     for i = 1, 80 do
         self.lines[i] = new("Frame", {
-            BackgroundColor3   = color,
+            BackgroundColor3       = color,
             BackgroundTransparency = math.clamp(0.85 - self.intensity * 0.2, 0.5, 0.98),
-            BorderSizePixel    = 0,
-            Visible            = false,
-            ZIndex             = 1,
+            BorderSizePixel        = 0,
+            Visible                = false,
+            ZIndex                 = 1,
         }, self.canvas)
     end
 
@@ -155,3 +166,5 @@ function Particles:destroy()
     if self.conn then self.conn:Disconnect() end
     if self.canvas then self.canvas:Destroy() end
 end
+
+return Particles
