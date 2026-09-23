@@ -1,0 +1,111 @@
+--models
+
+local BLADEX = getgenv().__BLADEX
+local Utils  = BLADEX.Utils
+local State  = BLADEX.State
+local Events = BLADEX.Events
+local HTTP   = BLADEX.HTTP
+local Logger = BLADEX.Logger
+
+local Models = { list = {}, loading = false, lastError = nil }
+
+local function isFreeModel(pricing)
+    if type(pricing) ~= "table" then return false end
+    local p = tonumber(pricing.prompt) or 0
+    local c = tonumber(pricing.completion) or 0
+    return p == 0 and c == 0
+end
+
+function Models:Fetch()
+    if self.loading then
+        return { success = false, error = { code = "LOADING", message = "Ya cargando." } }
+    end
+
+    local key = State:Get("settings.apiKey")
+    if Utils.IsEmpty(key) then
+        self.lastError = "Sin API Key"
+        return { success = false, error = { code = "NO_KEY", message = "Configura tu API Key." } }
+    end
+
+    self.loading = true
+    Events:Emit("ModelsLoading", true)
+
+    local requestOk, resp = pcall(function()
+        return HTTP:Call({
+            Url     = "https://openrouter.ai/api/v1/models",
+            Method  = "GET",
+            Headers = {
+                ["Authorization"] = "Bearer " .. key,
+                ["Content-Type"]  = "application/json",
+            },
+            timeout = 25,
+        })
+    end)
+
+    self.loading = false
+
+    if not requestOk then
+        self.lastError = Utils.Sanitize(resp)
+        Events:Emit("ModelsFailed", self.lastError)
+        return { success = false, error = { code = "INTERNAL", message = self.lastError } }
+    end
+    if not resp.success then
+        self.lastError = resp.error and resp.error.message or "Error de red"
+        Events:Emit("ModelsFailed", self.lastError)
+        return resp
+    end
+
+    local dec = Utils.Decode(resp.body)
+    if not dec or type(dec.data) ~= "table" then
+        self.lastError = "Respuesta invalida"
+        Events:Emit("ModelsFailed", self.lastError)
+        return { success = false, error = { code = "BAD_JSON", message = "Respuesta invalida." } }
+    end
+
+    local popular = {
+        ["openai/gpt-4o-mini"]                 = 1,
+        ["openai/gpt-4o"]                      = 2,
+        ["anthropic/claude-3.5-sonnet"]        = 3,
+        ["anthropic/claude-3-opus"]            = 4,
+        ["google/gemini-2.0-flash-001"]        = 5,
+        ["google/gemini-pro-1.5"]              = 6,
+        ["meta-llama/llama-3.3-70b-instruct"]  = 7,
+        ["meta-llama/llama-3.1-405b-instruct"] = 8,
+        ["mistralai/mistral-large"]            = 9,
+        ["deepseek/deepseek-chat"]             = 10,
+    }
+
+    local list = {}
+    for _, m in ipairs(dec.data) do
+        if type(m.id) == "string" and m.id ~= "" then
+            list[#list+1] = {
+                id      = m.id,
+                name    = m.name or m.id,
+                context = m.context_length or 0,
+                free    = isFreeModel(m.pricing),
+                pricing = m.pricing or {},
+            }
+        end
+    end
+
+    table.sort(list, function(a, b)
+        local pa, pb = popular[a.id] or 999, popular[b.id] or 999
+        if pa ~= pb then return pa < pb end
+        return a.id < b.id
+    end)
+
+    self.list = list
+    State:Set("models", list)
+    self.lastError = nil
+
+    if Utils.IsEmpty(State:Get("settings.model")) and #list > 0 then
+        State:Set("settings.model", list[1].id)
+    end
+
+    Events:Emit("ModelsLoaded", list)
+    Logger:Info("Modelos cargados: %d", #list)
+    return { success = true, count = #list }
+end
+
+BLADEX.Models = Models
+return Models
