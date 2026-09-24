@@ -1,0 +1,117 @@
+return function(E)
+local Utils, Logger, Events = E.Utils, E.Logger, E.Events
+local State = E.State
+local Models, OpenRouter = E.Models, E.OpenRouter
+local MODEL_TIERS = {
+    complex = { "openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash-001" },
+    medium = { "openai/gpt-4o-mini", "anthropic/claude-3.5-haiku", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct" },
+    simple = { "meta-llama/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct", "google/gemini-flash-1.5" }
+}
+local MODEL_STATS = { failures = {}, lastFailure = {}, failureCount = {} }
+
+local function classifyPrompt(text)
+    local lower = string.lower(text)
+    local score = 0
+    if #text > 800 then score = score + 2 end
+    if string.find(lower, "script") or string.find(lower, "code") or string.find(lower, "lua") or string.find(lower, "función") then score = score + 3 end
+    if string.find(lower, "explica") or string.find(lower, "cómo") or string.find(lower, "error") then score = score + 1 end
+    if score >= 4 then return "complex"
+    elseif score >= 2 then return "medium"
+    else return "simple" end
+end
+
+local function getModelsToTry(userText)
+    local tier = classifyPrompt(userText)
+    local pool = Utils.Copy(MODEL_TIERS[tier] or MODEL_TIERS.medium)
+    for i = #pool, 2, -1 do
+        local j = math.random(i)
+        pool[i], pool[j] = pool[j], pool[i]
+    end
+    local now = os.time()
+    local filtered = {}
+    for _, m in ipairs(pool) do
+        local lastFail = MODEL_STATS.lastFailure[m] or 0
+        local failCount = MODEL_STATS.failureCount[m] or 0
+        local cooldown = failCount > 3 and 60 or (failCount > 0 and 10 or 0)
+        if now - lastFail > cooldown then
+            table.insert(filtered, m)
+        else
+            Logger:Warn("Modelo %s en enfriamiento por errores previos.", m)
+        end
+    end
+    if #filtered == 0 then filtered = pool end
+    local safeModels = { "google/gemini-flash-1.5", "meta-llama/llama-3.1-8b-instruct", "openai/gpt-4o-mini" }
+    for _, m in ipairs(safeModels) do
+        local exists = false
+        for _, t in ipairs(filtered) do if t == m then exists = true break end end
+        if not exists then table.insert(filtered, m) end
+    end
+    return filtered
+end
+
+local function recordModelFailure(modelId, errCode)
+    if not modelId then return end
+    MODEL_STATS.lastFailure[modelId] = os.time()
+    MODEL_STATS.failureCount[modelId] = (MODEL_STATS.failureCount[modelId] or 0) + 1
+    Logger:Warn("Fallo registrado para %s (Código: %s). Total fallos: %d", modelId, tostring(errCode), MODEL_STATS.failureCount[modelId])
+end
+
+local function recordModelSuccess(modelId)
+    if not modelId then return end
+    MODEL_STATS.failureCount[modelId] = 0
+    MODEL_STATS.lastFailure[modelId] = 0
+end
+
+local PREFERRED_MODELS = { "openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash-001", "openai/gpt-4.1", "meta-llama/llama-3.3-70b-instruct", "openai/gpt-4o-mini", "anthropic/claude-3.5-haiku", "google/gemini-flash-1.5", "meta-llama/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct" }
+
+local function pickBestModel()
+    if not Models or type(Models.list) ~= "table" or #Models.list == 0 then return nil end
+    local byId = {} for _, m in ipairs(Models.list) do byId[m.id] = m end
+    for _, id in ipairs(PREFERRED_MODELS) do if byId[id] then return id end end
+    for _, m in ipairs(Models.list) do if m.free then return m.id end end
+    return Models.list[1].id
+end
+
+local function testModelAlive(modelId, callback)
+    if not OpenRouter or not modelId or modelId == "" then if callback then callback(false) end return end
+    task.spawn(function()
+        local payload = { model = modelId, messages = { { role = "user", content = "ping" } }, max_tokens = 5 }
+        local ok, resp = pcall(function() return OpenRouter:Chat(payload) end)
+        local alive = ok and type(resp) == "table" and resp.success == true
+        if callback then callback(alive) end
+    end)
+end
+
+local function testAndPickModel(progressCallback)
+    if not Models or type(Models.list) ~= "table" or #Models.list == 0 then return nil end
+    local byId = {} for _, m in ipairs(Models.list) do byId[m.id] = m end
+    local toTest = {}
+    for _, id in ipairs(PREFERRED_MODELS) do if byId[id] then table.insert(toTest, id) end end
+    for _, m in ipairs(Models.list) do if m.free and #toTest < 15 then table.insert(toTest, m.id) end end
+    local bestId = nil
+    for i, id in ipairs(toTest) do
+        if progressCallback then progressCallback(i, #toTest, id) end
+        local done = false local alive = false
+        testModelAlive(id, function(res) alive = res done = true end)
+        local timeout = tick() + 5
+        while not done and tick() < timeout do task.wait(0.1) end
+        if alive then bestId = id break end
+    end
+    return bestId or pickBestModel()
+end
+
+local SystemPrompt = { content = nil, loading = false, lastError = nil }
+function SystemPrompt:Load(force)
+    if self.loading then return false end
+    if self.content and not force then return true end
+    self.loading = true
+    self.lastError = nil
+    local ok, code = pcall(function() return game:HttpGet(SYSTEM_PROMPT_URL, true) end)
+    self.loading = false
+E.GetModelsToTry = getModelsToTry
+E.PickBestModel = pickBestModel
+E.TestAndPickModel = testAndPickModel
+E.RecordModelFailure = recordModelFailure
+E.RecordModelSuccess = recordModelSuccess
+return E
+end

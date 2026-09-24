@@ -1,0 +1,52 @@
+return function(E)
+local Utils, Logger = E.Utils, E.Logger
+local State, Chat, Storage = E.State, E.Chat, E.Storage
+local UI, CoreUI = E.UI, E.CoreUI
+local Models, OpenRouter = E.Models, E.OpenRouter
+local GameScanner, Context, SystemPrompt = E.GameScanner, E.Context, E.SystemPrompt
+
+local BLADEX = {}
+BLADEX.State = State
+BLADEX.Chat = Chat
+BLADEX.Storage = Storage
+BLADEX.UI = UI
+BLADEX.OpenRouter = OpenRouter
+BLADEX.Models = Models
+BLADEX.IconLoader = E.IconLoader
+BLADEX.AudioLoader = E.AudioLoader
+BLADEX.CoreUI = CoreUI
+BLADEX.Particles = E.Particles
+BLADEX.GameScanner = GameScanner
+BLADEX.Context = Context
+BLADEX.SystemPrompt = SystemPrompt
+
+function BLADEX:SetApiKey(k) if Utils.IsEmpty(k) then return { success = false, error = { code = "EMPTY", message = "Key vacia." } } end State:Set("settings.apiKey", Utils.Trim(k)) Chat:Save() task.spawn(function() if Models then Models:Fetch() end end) return { success = true } end
+function BLADEX:SetModel(m) if Utils.IsEmpty(m) then return { success = false, error = { code = "EMPTY", message = "Modelo vacio." } } end State:Set("settings.model", Utils.Trim(m)) Chat:Save() return { success = true } end
+function BLADEX:SetTemperature(t) t = math.clamp(tonumber(t) or 0.7, 0, 2) State:Set("settings.temperature", t) Chat:Save() return { success = true, value = t } end
+function BLADEX:LoadModels() if not Models then return { success = false, error = { code = "NO_MODULE", message = "Models no cargado." } } end return Models:Fetch() end
+function BLADEX:GetModels() return Models and Models.list or {} end
+function BLADEX:Send(text) return Chat:Send(text) end
+function BLADEX:Cancel() return Chat:Cancel() end
+function BLADEX:ClearHistory() Chat:Clear() return { success = true } end
+function BLADEX:GetHistory() return Utils.Copy(Chat.messages) end
+function BLADEX:Show() return UI:Mount() end
+function BLADEX:Hide() UI:_destroy() end
+function BLADEX:Minimize(v) return UI:Minimize(v) end
+function BLADEX:SaveFile(name, data) return Storage:SaveFile(name, data) end
+function BLADEX:LoadFile(name) return Storage:LoadFile(name) end
+function BLADEX:GetStoragePath() return Storage:Path() end
+function BLADEX:GetStorageDir() return Storage:Dir() end
+function BLADEX:HideGameUI(v) CoreUI:SetVisible(v == true) return { success = true } end
+function BLADEX:ShowGameUI() CoreUI:Restore() return { success = true } end
+function BLADEX:ScanGame() return GameScanner:Scan() end
+function BLADEX:GetGameIndex() return Utils.Copy(GameScanner.index) end
+function BLADEX:GetGameStats() return Utils.Copy(GameScanner.stats) end
+function BLADEX:FindInGame(kw) return GameScanner:FindByKeyword(kw) end
+function BLADEX:BuildContext(text) return Context:Build(text) end
+function BLADEX:ReloadSystemPrompt() return SystemPrompt:Load(true) end
+function BLADEX:PickModel() return E.PickBestModel() end
+function BLADEX:AddConsoleLine(text, color) return UI:_codeAppendLine(text, color) end
+
+E.BLADEX = BLADEX
+return E
+end
