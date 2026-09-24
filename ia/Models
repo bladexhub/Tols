@@ -1,5 +1,3 @@
---models
-
 local BLADEX = getgenv().__BLADEX
 local Utils  = BLADEX.Utils
 local State  = BLADEX.State
@@ -18,9 +16,6 @@ local function isFreeModel(pricing)
     return num(pricing.prompt) == 0 and num(pricing.completion) == 0
 end
 
--- Best-effort open/open-weight classification.
--- OpenRouter's /models endpoint does not expose one universal "open source"
--- boolean, so this uses known open-weight provider/model families.
 local OPEN_PATTERNS = {
     "qwen", "llama", "gemma", "mistral", "mixtral",
     "deepseek", "phi", "nemotron", "glm", "gpt-oss",
@@ -94,25 +89,21 @@ local function buildModel(m)
         name = m.name or m.id,
         context = context,
 
-        -- Classification
         free = free,
         open = open,
         paid = not free,
 
         category = free and "free" or (open and "open" or "paid"),
 
-        -- Pricing
         pricing = pricing,
         price = price,
 
-        -- Metadata returned by OpenRouter when available
         description = m.description or "",
         architecture = m.architecture or {},
         topProvider = m.top_provider or {},
         created = num(m.created),
         canonicalSlug = m.canonical_slug or m.id,
 
-        -- Capabilities
         capabilities = {
             vision = false,
             tools = supports(m, "tools"),
@@ -121,7 +112,6 @@ local function buildModel(m)
             json = supports(m, "response_format"),
         },
 
-        -- Keep raw supported parameters for future UI filters.
         supportedParameters = m.supported_parameters or {},
     }
 
@@ -196,13 +186,6 @@ function Models:Fetch()
         end
     end
 
-    -- Sort:
-    -- 1) free first
-    -- 2) open/open-weight next
-    -- 3) paid last
-    -- 4) larger context first
-    -- 5) newest API creation timestamp
-    -- 6) stable alphabetical fallback
     table.sort(list, function(a, b)
         local ca, cb = modelCategory(a), modelCategory(b)
 
