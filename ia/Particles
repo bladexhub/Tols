@@ -1,4 +1,3 @@
--- Particles remoto — requiere getgenv().__BLADEX con UI, State, Events, new, corner
 local ENV = getgenv().__BLADEX
 if not ENV then error("[Particles] __BLADEX no disponible.") end
 
@@ -69,11 +68,9 @@ function Particles.new(parent, w, h, count, color)
     return self
 end
 
--- Crea o elimina dots hasta tener exactamente `target`
 function Particles:_ensureDots(target)
     target = math.clamp(math.floor(target or self.count or 20), MIN_COUNT, MAX_COUNT)
 
-    -- Añadir
     while #self.dots < target do
         local dot = new("Frame", {
             Size                   = UDim2.fromOffset(self.size, self.size),
@@ -94,7 +91,6 @@ function Particles:_ensureDots(target)
         }
     end
 
-    -- Eliminar
     while #self.dots > target do
         local d = table.remove(self.dots)
         if d and d.frame then d.frame:Destroy() end
@@ -119,7 +115,6 @@ function Particles:_ensureLines(target)
     end
 end
 
--- Llamar cuando cambie el theme en caliente
 function Particles:SetColor(color)
     if not color then return end
     self.color = color
@@ -136,7 +131,6 @@ function Particles:update()
     local dt = now - (self.lowFpsCheck or now)
     self.lowFpsCheck = now
 
-    -- Detección de caída de FPS
     if dt > 0 then
         self.lowFpsFrames = self.lowFpsFrames + 1
         self.lowFpsTime   = self.lowFpsTime + dt
@@ -145,7 +139,6 @@ function Particles:update()
             if fps < 20 and not self._fpsWarned then
                 self._fpsWarned = true
                 Events:Emit("LowPerformanceAuto", true)
-                -- Auto-desactivar si el usuario tiene dynamicBackground ON
                 if State:Get("settings.lowPerformance") ~= true then
                     State:Set("settings.lowPerformance", true)
                 end
@@ -155,7 +148,6 @@ function Particles:update()
         end
     end
 
-    -- Movimiento
     local dots = self.dots
     local n = #dots
     local w, h = self.w, self.h
@@ -170,7 +162,6 @@ function Particles:update()
         d.frame.Position = UDim2.fromOffset(d.x, d.y)
     end
 
-    -- Líneas entre dots cercanos
     local maxDist  = 160
     local maxDist2 = maxDist * maxDist
     local li = 0
@@ -186,7 +177,7 @@ function Particles:update()
                 if li > #self.lines then break end
                 local line  = self.lines[li]
                 local dist  = math.sqrt(d2)
-                local angle = math.atan(dy, dx)   -- atan2 deprecado
+                local angle = math.atan2(dy, dx) -- CORREGIDO: atan2 en lugar de atan
                 local midX  = (a.x + b.x) / 2
                 local midY  = (a.y + b.y) / 2
                 line.Size     = UDim2.fromOffset(dist, 1)
@@ -214,13 +205,11 @@ function Particles:ApplySettings()
     self.speed     = getSpeed()
     self.size      = getSize()
 
-    -- Ajustar cantidad de dots si cambió
     local target = getCount()
     if target ~= self.count then
         self:_ensureDots(target)
     end
 
-    -- Aplicar velocidad, tamaño y transparencia
     for _, d in ipairs(self.dots) do
         d.vx = (math.random() - 0.5) * self.speed * 3
         d.vy = (math.random() - 0.5) * self.speed * 3
