@@ -1,9 +1,23 @@
--- Implementaciones de proveedores de IA.
--- Exporta las fábricas de módulos de proveedores.
-return {
-    ["provider/anthropic"] = (function()
+-- BLADEX UAI - proveedores
+-- Remote UAI modules. Loaded by the main loader.
 
+local modulos = {}
 
+    modulos["provider/anthropic"] = (function()
+-- The Anthropic Messages adapter.
+--
+-- Same contract as provider/openai: one request in, one normalised result out. The
+-- wire format is a different API rather than a dialect of the same one -- the system
+-- prompt is hoisted to a top-level field, a tool declares `input_schema` instead of
+-- nesting under `function`, a tool call arrives as a `tool_use` content block, and
+-- its result goes back as a `tool_result` block inside a USER turn. All of that
+-- conversion lives here so the context store, the loop and the transcript keep
+-- speaking one internal shape.
+--
+-- Deliberately absent from the body: `temperature`, `top_p` and `top_k`. They were
+-- removed on Opus 4.7 and answer 400 on every model since, and this client's
+-- default is an Opus 5. A record that needs them on an older Claude can set them
+-- through `record.params`, which is spread in last.
 return function(env)
 	local util = env.require("runtime/util")
 	local config = env.require("runtime/config")
@@ -17,23 +31,23 @@ return function(env)
 
 	local M = {}
 
-	
-	
-	
-	
-	
+	-- Same wall as the chat adapter, for the same reason: the default is a day, the
+	-- highest of any clock here, because a request that times out is a turn spent for
+	-- nothing and nothing else can rescue it. The unlimited switch means the same day
+	-- rather than a true infinity -- a request nobody collects is indistinguishable
+	-- from a hung client.
 	local function requestTimeout(request)
 		if request.timeout then return request.timeout end
 		if config.get("agent.requestUnlimited", false) then return 86400 end
 		return config.get("agent.requestTimeout", 86400)
 	end
 
-	
-	
-	
-	
-	
-	
+	-- The executor's transport wall, answered with a smaller ask. Same reasoning as
+	-- the chat adapter: executors may hard-cap HTTP at thirty or sixty seconds
+	-- and ignore the Timeout option entirely, so no config value lifts that wall. A
+	-- model that thinks for ninety seconds finishes inside sixty when asked to think
+	-- less. The effort lives in `output_config.effort` on this wire; the reply ceiling
+	-- is `max_tokens`, which is mandatory here.
 	local function smallerAsk(body)
 		local changes = {}
 		local lowered = util.copy(body)
@@ -62,8 +76,8 @@ return function(env)
 
 	local VERSION = "2023-06-01"
 
-	
-	
+	-- Anthropic stop reasons mapped onto the finish reasons the loop already reads,
+	-- so nothing downstream has to learn a second vocabulary.
 	local FINISH = {
 		end_turn = "stop",
 		stop_sequence = "stop",
@@ -75,8 +89,8 @@ return function(env)
 
 	function M.endpoint(record)
 		local base = util.trim(record.baseUrl or "")
-		
-		
+		-- A base pasted as the full messages URL must not gain a second /messages,
+		-- and one pasted as an OpenAI endpoint is still usable as a host.
 		base = base:gsub("/messages$", ""):gsub("/chat/completions$", "")
 		return registry.endpoint({ baseUrl = base, query = record.query }, "/messages")
 	end
@@ -87,10 +101,10 @@ return function(env)
 		local headers = {}
 		if key ~= "" and style ~= "none" then
 			if style == "bearer" then
-				
-				
-				
-				
+				-- The Messages API authenticates with x-api-key. `bearer` is this
+				-- client's default for every other provider, so a record carrying it
+				-- means "the usual way" rather than a deliberate choice -- honouring it
+				-- literally here would just produce a 401 nobody could explain.
 				headers["x-api-key"] = key
 			else
 				headers = registry.authHeaders(record, explicitKey)
@@ -101,10 +115,10 @@ return function(env)
 		return headers
 	end
 
-	
-	
-	
-	
+	-- Internal messages are OpenAI-shaped. Anthropic wants the system prompt lifted
+	-- out, tool results carried inside user turns, and every result for one assistant
+	-- turn merged into a SINGLE user message -- splitting them across several is
+	-- documented to train the model out of calling tools in parallel.
 	function M.wireMessages(messages)
 		local system, out = {}, {}
 
@@ -132,11 +146,11 @@ return function(env)
 				end
 			elseif role == "assistant" then
 				if type(message.raw) == "table" and #message.raw > 0 then
-					
-					
-					
-					
-					
+					-- Replayed verbatim. Thinking blocks in particular have to come back
+					-- unchanged on the same model -- they carry a signature that cannot
+					-- be rebuilt -- and reassembling them from text would not be
+					-- unchanged. The one repair is a tool_use input that decoded to an
+					-- empty table, which would re-encode as [] and be rejected.
 					local blocks = {}
 					for index, block in ipairs(message.raw) do
 						if type(block) == "table" and block.type == "tool_use"
@@ -156,8 +170,8 @@ return function(env)
 					for _, call in ipairs(message.toolCalls or {}) do
 						local fn = call["function"] or {}
 						local input = util.decode(fn.arguments or call.arguments or "{}")
-						
-						
+						-- `input` is a schema-shaped object, so an empty one has to encode
+						-- as {} rather than as [].
 						if type(input) ~= "table" or util.count(input) == 0 then
 							input = util.emptyObject()
 						end
@@ -175,14 +189,14 @@ return function(env)
 			end
 		end
 
-		
+		-- The API requires the first turn to be a user one.
 		if out[1] and out[1].role ~= "user" then
 			table.insert(out, 1, { role = "user", content = "Continue." })
 		end
 		return out, table.concat(system, "\n\n")
 	end
 
-	
+	-- A tool definition loses its `function` wrapper and its schema is renamed.
 	function M.wireTools(tools)
 		local out = {}
 		for _, definition in ipairs(tools or {}) do
@@ -200,14 +214,14 @@ return function(env)
 
 	function M.buildBody(record, request)
 		local messages, system = M.wireMessages(request.messages)
-		
-		
+		-- Clamped to whatever this record's model was last told it allows, which is
+		-- shared with the chat-completions adapter because the lesson is the same one.
 		local maxTokens = openai.cappedMaxTokens(record,
 			request.maxTokens or config.get("agent.maxTokens", 4096))
 		local body = {
 			model = record.model,
 			messages = messages,
-			
+			-- Required here, unlike chat completions, and it must be positive.
 			max_tokens = (maxTokens and maxTokens > 0) and maxTokens or 4096,
 		}
 		if system ~= "" then body.system = system end
@@ -215,12 +229,12 @@ return function(env)
 		if #tools > 0 then body.tools = tools end
 		if request.stream then body.stream = true end
 
-		
-		
-		
-		
-		
-		
+		-- Reasoning. Adaptive is the only shape the current generations accept: a
+		-- fixed `budget_tokens` was removed after 4.6 and answers 400 on everything
+		-- since. `display` is the part that matters to a client with a transcript --
+		-- it defaults to omitted, so the thinking blocks arrive with empty text, and a
+		-- client that never asks for a summary looks like it has no reasoning support
+		-- at all rather than like one that was never told to show any.
 		if traits.thinkingStyle(record.model) == "adaptive" then
 			body.thinking = {
 				type = "adaptive",
@@ -228,21 +242,21 @@ return function(env)
 			}
 		end
 
-		
-		
+		-- Depth, on the wire field the Messages API uses for it. Same setting and same
+		-- clamping as the chat-completions adapter, which spells it differently.
 		local effort = openai.effortFor(record, request)
 		if effort then body.output_config = { effort = effort } end
 
 		for key, value in pairs(record.params or {}) do body[key] = value end
 		for key, value in pairs(request.extra or {}) do body[key] = value end
-		
+		-- This adapter has no WebSocket path; SSE here still arrives over HTTP.
 		openai.limitExecutorReply(record, request, body)
 		return body
 	end
 
-	
-	
-	
+	-- Anthropic reports failures as {"type":"error","error":{"type":...,"message":...}},
+	-- which is the shape provider/openai already extracts, so the status-to-prose
+	-- table and the empty-body handling are shared rather than duplicated.
 	function M.errorText(res, err)
 		return openai.errorText(res, err)
 	end
@@ -251,7 +265,7 @@ return function(env)
 		usage = usage or {}
 		local input = usage.input_tokens or 0
 		local output = usage.output_tokens or 0
-		
+		-- Renamed to the OpenAI keys the usage panel reads, originals kept alongside.
 		return {
 			prompt_tokens = input,
 			completion_tokens = output,
@@ -261,7 +275,7 @@ return function(env)
 		}
 	end
 
-	
+	-- One whole Anthropic message -> the result shape provider/openai returns.
 	function M.fromMessage(decoded)
 		local content, reasoning, calls = {}, {}, {}
 		for _, block in ipairs(decoded.content or {}) do
@@ -274,7 +288,7 @@ return function(env)
 					calls[#calls + 1] = {
 						id = block.id,
 						type = "function",
-						["function"] = {
+						modulos["function"] = {
 							name = block.name,
 							arguments = util.encode(block.input or util.emptyObject()),
 						},
@@ -292,16 +306,16 @@ return function(env)
 			model = decoded.model,
 			id = decoded.id,
 			usage = normaliseUsage(decoded.usage),
-			
+			-- Kept so the next turn can replay this assistant message byte for byte.
 			raw = decoded.content,
 			chunks = 0,
 			frames = 0,
 		}
 	end
 
-	
-	
-	
+	-- The streamed form. Frame splitting is shared with net/sse -- that part is the
+	-- SSE spec, not a vendor decision -- but the events inside are Anthropic's own:
+	-- message_start, content_block_start/delta/stop, message_delta, message_stop.
 	function M.parseStream(body)
 		local content, reasoning = {}, {}
 		local slots, order = {}, {}
@@ -317,11 +331,11 @@ return function(env)
 			return slots[key]
 		end
 
-		
-		
-		
-		
-		
+		-- Thinking is collected per block rather than only as flat text, because a
+		-- thinking block carries a signature and the next turn has to hand both back
+		-- exactly as they arrived. Rebuilding one from its text would produce a block
+		-- the API cannot verify, and dropping it -- which this path used to do -- makes
+		-- extended thinking unusable the moment a turn calls a tool.
 		local thinking, thinkingOrder = {}, {}
 
 		local function thinkingFor(index)
@@ -359,8 +373,8 @@ return function(env)
 							end
 							if type(block.signature) == "string" then slot.signature = block.signature end
 						elseif block.type == "redacted_thinking" then
-							
-							
+							-- Nothing to show and nothing to read, but it still has to be
+							-- replayed: the turn it belongs to is incomplete without it.
 							thinkingFor(event.index).redacted = block.data
 						end
 					elseif kind == "content_block_delta" and type(event.delta) == "table" then
@@ -393,17 +407,17 @@ return function(env)
 		local text = table.concat(content)
 		local calls, raw = {}, {}
 
-		
-		
+		-- Thinking leads the content array, and the order is not cosmetic: a replayed
+		-- assistant turn has to present its thinking before its text and its tool calls.
 		table.sort(thinkingOrder, function(a, b) return thinking[a].index < thinking[b].index end)
 		for _, key in ipairs(thinkingOrder) do
 			local slot = thinking[key]
 			if slot.redacted ~= nil then
 				raw[#raw + 1] = { type = "redacted_thinking", data = slot.redacted }
 			elseif slot.signature and slot.signature ~= "" then
-				
-				
-				
+				-- Only a signed block is worth replaying. An unsigned one cannot be
+				-- verified, so sending it back is a refusal where omitting it is merely
+				-- an incomplete record of the turn.
 				raw[#raw + 1] = {
 					type = "thinking",
 					thinking = table.concat(slot.text),
@@ -422,7 +436,7 @@ return function(env)
 				calls[#calls + 1] = {
 					id = slot.id or ("toolu_" .. tostring(slot.index)),
 					type = "function",
-					["function"] = { name = slot.name, arguments = arguments },
+					modulos["function"] = { name = slot.name, arguments = arguments },
 				}
 				local input = util.decode(arguments)
 				if type(input) ~= "table" or util.count(input) == 0 then input = util.emptyObject() end
@@ -447,13 +461,13 @@ return function(env)
 		}
 	end
 
-	
-	
-	
-	
-	
-	
-	
+	-- Performs one completion against one provider. Same return contract as
+	-- provider/openai: result, nil on success or nil, message, res on failure, so the
+	-- chain in agent/loop cannot tell the two adapters apart.
+	--
+	-- A record with several keys rotates on a 429 or quota refusal with no sleep
+	-- between keys, exactly as the chat adapter does: the next key's quota is
+	-- untouched, so waiting would only spend the deadline the reply still needs.
 	local function quotaRefusal(res)
 		if not res then return false end
 		if res.status == 429 then return true end
@@ -490,8 +504,8 @@ return function(env)
 		local started = clock.ms()
 		local lastRequestMs = 0
 		local rotationsLeft = math.max(#pool - 1, 0)
-		
-		
+		-- Same as the chat adapter: with a pool, a 429 is rotation's to answer, not
+		-- the transport's to sleep on.
 		local skip429 = (#pool > 1) and { [429] = true } or nil
 
 		local function fire(payload)
@@ -510,8 +524,8 @@ return function(env)
 				aborted = request.aborted,
 				onRetry = request.onRetry,
 				tag = "messages:" .. record.id,
-				
-				
+				-- Same reasoning as the chat adapter: a thinking model emits nothing
+				-- until it answers, so the wall has to outlast the think.
 				timeout = requestTimeout(request),
 			})
 			lastRequestMs = clock.since(requestStarted)
@@ -541,12 +555,12 @@ return function(env)
 
 		local res, err = fireWithRotation(body)
 
-		
-		
-		
-		
-		
-		
+		-- max_tokens is mandatory on this API and its limit is per model, so a reply
+		-- ceiling chosen for the widest Claude is a hard 400 on a narrower one -- and
+		-- there is no alternative shape to fall back to, the way chat completions can
+		-- rename a field. Lower it to the number the refusal names, try once more, and
+		-- keep it on the record so no later turn pays for the lesson twice. One retry:
+		-- a second refusal is a different problem and belongs in the transcript.
 		if res and res.status == 400 and tonumber(body.max_tokens) then
 			local message = M.errorText(res, nil)
 			if not openai.contextWindowFromMessage(message) and tostring(message):lower():find("max_tokens", 1, true) then
@@ -564,10 +578,10 @@ return function(env)
 			end
 		end
 
-		
-		
-		
-		
+		-- The executor's transport wall: no body, no headers, an executor raise for
+		-- the error text. Same one smaller-ask retry as the chat adapter, so a model
+		-- can finish inside the wall. Only after 20-130 seconds without a response,
+		-- and only when the smaller ask is actually smaller.
 		local recoveredTokens
 		if not res and err and err ~= "aborted" and lastRequestMs >= 20000 and lastRequestMs <= 130000 then
 			local lowered, note = smallerAsk(body)
@@ -611,8 +625,8 @@ return function(env)
 			return nil, "stream error: " .. parsed.streamError, res
 		end
 
-		
-		
+		-- A policy refusal is a 200 with nothing to act on, so it is reported as the
+		-- reason rather than as an empty completion.
 		if parsed.stopReason == "refusal" then
 			local message = "the model declined this request (stop_reason refusal)"
 			registry.markFail(record, message)
@@ -644,10 +658,21 @@ return function(env)
 end
 end)()
 
+-- ==========================================================================
+-- provider/catalog
+-- ==========================================================================,
 
-    ["provider/chat"] = (function()
-
-
+    modulos["provider/chat"] = (function()
+-- Picks the wire protocol for a provider record.
+--
+-- Two adapters implement the same contract -- provider/openai for anything speaking
+-- /chat/completions, provider/anthropic for the Messages API -- and this is the only
+-- place that decides which one a record uses. Everything above it (the agent loop,
+-- the transcript, the connection test) is written against one shape and does not
+-- know there is a choice.
+--
+-- `record.api` is the switch. It is absent on every record saved before the second
+-- adapter existed, and absent means OpenAI, so nothing needs migrating.
 return function(env)
 	local M = {}
 
@@ -676,9 +701,9 @@ return function(env)
 		return M.adapterFor(record).errorText(res, err)
 	end
 
-	
-	
-	
+	-- The headers a record's requests carry, including the ones its wire protocol
+	-- requires. Model discovery hits the same host, so it asks for these too rather
+	-- than assembling auth itself and getting the Anthropic case wrong.
 	function M.headers(record, request)
 		local adapter = M.adapterFor(record)
 		local registry = env.require("provider/registry")
@@ -688,7 +713,7 @@ return function(env)
 		return headers
 	end
 
-	
+	-- The path a record's completions go to, for the Providers panel to show.
 	function M.endpointOf(record)
 		local adapter = M.adapterFor(record)
 		if adapter.endpoint then return adapter.endpoint(record) end
@@ -703,10 +728,17 @@ return function(env)
 end
 end)()
 
+-- ==========================================================================
+-- provider/models
+-- ==========================================================================,
 
-    ["provider/openai"] = (function()
-
-
+    modulos["provider/openai"] = (function()
+-- The OpenAI chat-completions adapter.
+--
+-- One request shape in, one normalised result out. Everything vendor-specific
+-- lives here: auth style, the streaming decision, error extraction, and the
+-- parameter repairs that make the same call work across a dozen gateways that all
+-- claim to be OpenAI-compatible and none of which quite are.
 return function(env)
 	local util = env.require("runtime/util")
 	local config = env.require("runtime/config")
@@ -726,15 +758,15 @@ return function(env)
 		return stream and caps.ws and util.trim(record.wsUrl) ~= ""
 	end
 
-	
-	
-	
-	
-	
-	
-	
-	
-	
+	-- The executor's own transport wall, answered with a smaller ask. Some executors
+	-- hard-cap every HTTP request at thirty or sixty seconds and ignore Timeout
+	-- entirely, so no config value lifts that wall. What can change is the ask: a
+	-- model that thinks for ninety seconds finishes inside sixty when asked to think
+	-- less. One notch of effort down and the reply ceiling halved, and only when the
+	-- first attempt produced nothing at all -- a refusal with a body is a decision,
+	-- not a deadline, and retrying it smaller is not going to change the answer.
+	-- Returns the shrunk body and a one-line note, or nil when there is nothing left
+	-- to shrink.
 	local function smallerAsk(body)
 		local changes = {}
 		local lowered = util.copy(body)
@@ -761,24 +793,24 @@ return function(env)
 		return lowered, table.concat(changes, ", ")
 	end
 
-	
-	
-	
-	
-	
-	
-	
+	-- The wall the transport waits against. The default is a day and it is the
+	-- highest of any clock here on purpose: this is the one deadline nothing else can
+	-- rescue, because a tool or a subagent that runs out of time still gets its result
+	-- collected, while a request that times out is a turn spent for nothing. The
+	-- unlimited switch means the same day rather than a true infinity -- a request
+	-- nobody collects is indistinguishable from a hung client. Shared by both fire
+	-- paths in this adapter.
 	local function requestTimeout(request)
 		if request.timeout then return request.timeout end
 		if config.get("agent.requestUnlimited", false) then return 86400 end
 		return config.get("agent.requestTimeout", 86400)
 	end
 
-	
-	
-	
-	
-	
+	-- Messages are rewritten into the wire shape rather than passed through, so a
+	-- field the context store finds useful (timing, ids) cannot leak into a
+	-- payload. Reasoning models (DeepSeek-R1, Claude thinking, QwQ, etc.) require
+	-- previous assistant reasoning to be passed back on subsequent turns to
+	-- maintain thinking state.
 	function M.wireMessages(messages)
 		local out = {}
 		for _, message in ipairs(messages or {}) do
@@ -788,15 +820,15 @@ return function(env)
 				entry.content = tostring(message.content or "")
 			elseif message.role == "assistant" then
 				if message.toolCalls and #message.toolCalls > 0 then
-					
-					
+					-- An assistant turn that called tools must replay those calls
+					-- verbatim, and content may legitimately be an empty string.
 					entry.content = message.content or ""
 					entry.tool_calls = {}
 					for _, call in ipairs(message.toolCalls) do
 						entry.tool_calls[#entry.tool_calls + 1] = {
 							id = call.id,
 							type = "function",
-							["function"] = {
+							modulos["function"] = {
 								name = call["function"] and call["function"].name or call.name,
 								arguments = call["function"] and call["function"].arguments or call.arguments or "{}",
 							},
@@ -823,11 +855,11 @@ return function(env)
 		return out
 	end
 
-	
+	-- Standard OpenCode tool definitions required by OpenCode Zen free tier
 	local OPENCODE_TOOLS = {
 		{
 			type = "function",
-			["function"] = {
+			modulos["function"] = {
 				name = "bash",
 				description = "Execute bash command",
 				parameters = {
@@ -841,7 +873,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			["function"] = {
+			modulos["function"] = {
 				name = "read",
 				description = "Read file",
 				parameters = {
@@ -855,7 +887,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			["function"] = {
+			modulos["function"] = {
 				name = "edit",
 				description = "Edit file",
 				parameters = {
@@ -869,7 +901,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			["function"] = {
+			modulos["function"] = {
 				name = "glob",
 				description = "Find files",
 				parameters = {
@@ -883,7 +915,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			["function"] = {
+			modulos["function"] = {
 				name = "grep",
 				description = "Search pattern",
 				parameters = {
@@ -897,7 +929,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			["function"] = {
+			modulos["function"] = {
 				name = "list",
 				description = "List files",
 				parameters = {
@@ -915,9 +947,9 @@ return function(env)
 			messages = M.wireMessages(request.messages),
 		}
 
-		
-		
-		
+		-- The classic Azure preview path takes the model from the deployment in the
+		-- URL and rejects the field; everyone else -- the Azure v1 surface included
+		-- -- requires it.
 		if record.preset ~= "azure" and util.trim(record.model) ~= "" then
 			body.model = record.model
 		end
@@ -930,7 +962,7 @@ return function(env)
 			end
 		end
 
-		
+		-- OpenCode free-tier workaround: Console requires stream and standard tool declarations
 		if registry.isOpencode(record) then
 			body.stream = true
 			body.stream_options = { include_usage = true }
@@ -955,10 +987,10 @@ return function(env)
 			end
 		end
 
-		
-		
-		
-		
+		-- Sampling parameters are rejected outright by the current Claude generations
+		-- rather than ignored, so a model documented to refuse one is never sent it.
+		-- Every other model keeps the behaviour it has always had, because
+		-- withholding a parameter a gateway would have honoured is its own bug.
 		local temperature = request.temperature
 		if temperature == nil then temperature = config.get("agent.temperature", 0.4) end
 		if temperature and traits.allowsSampling(record.model) then
@@ -968,9 +1000,9 @@ return function(env)
 		local maxTokens = M.cappedMaxTokens(record, request.maxTokens or config.get("agent.maxTokens", 4096))
 		if maxTokens and maxTokens > 0 then body.max_tokens = maxTokens end
 
-		
-		
-		
+		-- Reasoning depth, spelled the way the chat-completions wire spells it. Only
+		-- sent to a model with a scale to place it on, and clamped to that scale, so
+		-- asking for more than a model has is a smaller request rather than a refusal.
 		local effort = M.effortFor(record, request)
 		if effort then body.reasoning_effort = effort end
 
@@ -985,8 +1017,8 @@ return function(env)
 		return body
 	end
 
-	
-	
+	-- Error text, in the order gateways actually use. A 401 with an empty body is
+	-- common enough that the status alone has to produce something readable.
 	local STATUS_TEXT = {
 		[400] = "the provider rejected the request",
 		[401] = "the API key was rejected",
@@ -1002,14 +1034,14 @@ return function(env)
 		[529] = "the provider is overloaded",
 	}
 
-	
-	
-	
-	
-	
-	
-	
-	
+	-- An HTML body on a refusal is not the API talking.
+	--
+	-- A gateway answers in JSON. A whole HTML document -- especially one opening with
+	-- Cloudflare's `<!--[if lt IE 7]>` conditional-comment block -- means the request was
+	-- stopped in front of the API and never reached the account, the key or the model. So
+	-- naming any of those as a possible cause, which the 403 text did, sends the reader
+	-- off to check three things that are all fine. The response headers say which edge it
+	-- was: `server`, `cf-ray` and `cf-mitigated` are already kept for the Requests view.
 	local function edgeBlock(res)
 		if not res then return nil end
 		local body = util.trim(tostring(res.body or ""))
@@ -1032,8 +1064,8 @@ return function(env)
 	function M.errorText(res, err)
 		if err and not res then return tostring(err) end
 		local status = res and res.status or 0
-		
-		
+		-- Checked before the status table, because the status is the least informative
+		-- thing about this class of failure.
 		local edge = edgeBlock(res)
 		if edge then
 			return string.format(
@@ -1070,10 +1102,10 @@ return function(env)
 			end
 		end
 		local prefix = STATUS_TEXT[status]
-		
-		
-		
-		
+		-- A refusal that carries no body at all is worth naming as such. It usually
+		-- means the call never reached the API, so nothing about the key or the model
+		-- accounts for it, and the answer is in the response headers the Requests view
+		-- now keeps rather than anywhere in this string.
 		if (not message or message == "") and res and util.trim(res.body or "") == "" then
 			return string.format("%s (%d), and the response had no body -- see the Requests view",
 				prefix or "the request was refused", status)
@@ -1084,21 +1116,21 @@ return function(env)
 		return string.format("request failed with status %d", status)
 	end
 
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
+	-- The output ceiling a refusal names, or nil when it names nothing usable.
+	--
+	-- Every model has its own max_tokens limit and no endpoint publishes it: /models
+	-- reports ids, not capabilities. The one place the number appears is the 400 that
+	-- comes back when a request exceeds it, and the wording is different everywhere --
+	-- "max_tokens: 200000 > 64000, which is the maximum allowed number of output
+	-- tokens for claude-sonnet-4-5-20250929", "max_tokens is too large: 200000. This
+	-- model supports at most 16384 completion tokens", "must be less than or equal to
+	-- 8192". What they share is that the limit is the largest number in the sentence
+	-- below what was sent, so that is what is taken.
+	--
+	-- The floor is a thousand and it is load-bearing: the status code is part of the
+	-- text this is handed, and clamping a reply ceiling to 400 tokens because "(400)"
+	-- appeared in the prefix would be worse than the original error. Nothing caps
+	-- output below a thousand tokens.
 	function M.ceilingFromMessage(message, current)
 		current = tonumber(current) or 0
 		if current <= 0 then return nil end
@@ -1110,25 +1142,25 @@ return function(env)
 			end
 		end
 		if best then return best end
-		
-		
+		-- Nothing quotable. Halving converges in a couple of attempts and cannot loop,
+		-- because each attempt is a fresh request against a smaller number.
 		local halved = math.floor(current / 2)
 		return (halved >= 1000) and halved or nil
 	end
 
-	
-	
-	
-	
-	
-	
-	
+	-- The ceiling to actually send: what the user asked for, lowered to whatever this
+	-- record has already been told its model allows.
+	--
+	-- Kept per model rather than per record, because the limit belongs to the model.
+	-- Pointing a record at a wider Claude has to stop clamping it to the narrower
+	-- one's limit, and there would be nothing on screen to explain it if it did not:
+	-- the slider would read 64k while every request asked for 32k.
 	function M.cappedMaxTokens(record, wanted)
 		wanted = tonumber(wanted) or 0
-		
-		
-		
-		
+		-- What the model documents comes first, so a slider set above a model's
+		-- ceiling costs nothing to discover. What a refusal actually taught this
+		-- record still applies after it, because the gateway is the final word on
+		-- what it will accept.
 		local documented = traits.maxOutput(record.model)
 		if documented and wanted > documented then wanted = documented end
 		local cap = record.maxTokensCap
@@ -1138,9 +1170,9 @@ return function(env)
 		return wanted
 	end
 
-	
-	
-	
+	-- SSE over executor HTTP is still a buffered body. Bound its default reply,
+	-- while retaining explicit token overrides and transports that stream/poll.
+	-- Also called after a failed socket so its HTTP fallback gets the same bound.
 	function M.limitExecutorReply(record, request, body, socket)
 		if socket or (config.get("bridge.enabled", false) and config.get("bridge.runtime", "game") == "web") then return end
 		local params, extra = record.params or {}, request.extra or {}
@@ -1155,25 +1187,25 @@ return function(env)
 		if not wanted or wanted <= 0 or wanted > ceiling then body[field] = ceiling end
 	end
 
-	
-	
-	
-	
-	
-	
+	-- The effort level to send, or nil for none. Both adapters ask this and differ
+	-- only in how the answer is spelled on the wire.
+	--
+	-- Clamped to the model's own scale rather than passed through, because the scales
+	-- differ by generation -- "xhigh" arrived after 4.6 -- and a level a model has
+	-- never heard of is a refusal rather than a rounding.
 	function M.effortFor(record, request)
 		local wanted = request and request.effort
 		if wanted == nil then wanted = config.get("agent.effort", "high") end
 		wanted = tostring(wanted or "")
 		if wanted == "" or wanted == "off" then return nil end
-		
-		
-		
+		-- nearestEffort passes the level through for a model the user has manually
+		-- marked as a reasoner, and clamps it against the documented scale for one
+		-- the table knows -- which is the same contract as before, plus the override.
 		return traits.nearestEffort(record and record.model, wanted)
 	end
 
-	
-	
+	-- Stores a refusal's limit or a successful smaller reply after a transport wall.
+	-- Both adapters call this; the record persists, so the lesson outlives a session.
 	function M.rememberMaxTokens(record, tokens)
 		tokens = tonumber(tokens)
 		if not tokens or tokens ~= tokens or tokens <= 0 or tokens == math.huge then return end
@@ -1186,8 +1218,8 @@ return function(env)
 		registry.save(record, { force = true })
 	end
 
-	
-	
+	-- Read the window named by a context refusal, never the request size or the
+	-- output budget beside it. A max_tokens refusal alone cannot teach a window.
 	function M.contextWindowFromMessage(message)
 		local text = tostring(message or ""):lower()
 		local isContext = text:find("context length", 1, true)
@@ -1198,7 +1230,7 @@ return function(env)
 			or text:find("too many tokens", 1, true)
 			or text:find("reduce the length of the messages", 1, true)
 		if not isContext then return nil end
-		
+		-- Some gateways format limits as 128,000 or 1,048,576.
 		text = text:gsub("(%d),(%d%d%d)", "%1%2"):gsub("(%d),(%d%d%d)", "%1%2")
 		local patterns = {
 			"maximum context length is%s*(%d+)",
@@ -1219,8 +1251,8 @@ return function(env)
 		return nil
 	end
 
-	
-	
+	-- A refusal can only lower an existing claim. The shared model map feeds
+	-- compaction, badges and configuration export, and persists across executions.
 	function M.rememberContextWindow(record, window)
 		window = tonumber(window)
 		if not window or window ~= window or window < 8000 or window == math.huge then return end
@@ -1244,10 +1276,10 @@ return function(env)
 		return window
 	end
 
-	
-	
-	
-	
+	-- Gateways reject different subsets of the payload. Rather than maintaining a
+	-- per-vendor allowlist that goes stale, a 400 whose text names a field is
+	-- repaired once and retried -- and the repair is remembered on the record so
+	-- the next turn does not pay for it again.
 	local REPAIRS = {
 		{
 			match = "max_completion_tokens",
@@ -1260,12 +1292,12 @@ return function(env)
 			end,
 		},
 		{
-			
-			
+			-- Ordered after the rename on purpose: a gateway that wants the other field
+			-- name says so in a message this would otherwise read as a size complaint.
 			match = "max_tokens",
 			apply = function(body, message)
-				
-				
+				-- Only ever driven by a live refusal. Replayed from record.repairs there
+				-- is no message, and halving on every request would be a silent bug.
 				if not message then return nil end
 				local current = body.max_tokens or body.max_completion_tokens
 				if not current then return nil end
@@ -1304,8 +1336,8 @@ return function(env)
 			end,
 		},
 		{
-			
-			
+			-- Not every gateway that relays to a reasoning model forwards the field
+			-- that asks for a depth. Dropping it costs the setting, not the turn.
 			match = "reasoning_effort",
 			apply = function(body)
 				if body.reasoning_effort ~= nil then
@@ -1324,10 +1356,10 @@ return function(env)
 			end,
 		},
 		{
-			
-			
-			
-			
+			-- Gateways relaying to reasoning models reject the classic system role and
+			-- name the newer one in the message. Rewriting the first system message to
+			-- `developer` is the documented mapping, and it is remembered on the record
+			-- like every other repair so only the first turn pays for the lesson.
 			match = "developer",
 			apply = function(body)
 				local renamed = false
@@ -1341,18 +1373,18 @@ return function(env)
 			end,
 		},
 		{
-			
-			
-			
-			
-			
-			
-			
-			
-			
-			
-			
-			
+			-- Thinking mode on Anthropic gateways (e.g. AgentRouter/NewAPI routing to Claude):
+			-- requires assistant turns to carry content blocks with type = "thinking".
+			--
+			-- Ephemeral (see EPHEMERAL_REPAIRS): a gateway like AgentRouter multiplexes
+			-- several backends behind one endpoint, and a sibling backend rejects these
+			-- blocks as an unknown variant. Remembering the conversion would poison every
+			-- later turn that lands on the OpenAI-schema backend, so it is applied per
+			-- refusal and never saved.
+			--
+			-- Only turns that actually captured reasoning are converted: a thinking block
+			-- rebuilt from empty text has no signature and is rejected again, so a turn
+			-- with nothing to replay is left as-is for the sibling backend to accept.
 			match = "content[].thinking",
 			apply = function(body)
 				local fixed = 0
@@ -1377,13 +1409,13 @@ return function(env)
 			end,
 		},
 		{
-			
-			
-			
-			
-			
-			
-			
+			-- The inverse of the conversion above. A sibling backend behind the same
+			-- gateway uses an OpenAI-style deserializer with no `thinking` variant and
+			-- rejects the blocks with "unknown variant `thinking`, expected one of
+			-- `text`, `image_url`, `file`". Flatten assistant content back to a plain
+			-- string and restore reasoning_content so the request the sibling backend
+			-- can read goes out. Ephemeral for the same reason its inverse is: neither
+			-- content shape is stable across the gateway's routing.
 			match = "unknown variant `thinking`",
 			apply = function(body)
 				local fixed = 0
@@ -1415,10 +1447,10 @@ return function(env)
 			end,
 		},
 		{
-			
-			
-			
-			
+			-- Reasoning models (DeepSeek-R1, QwQ, Step, etc.) require reasoning_content passed back
+			-- on every assistant turn, even when empty. If a gateway rejects because reasoning_content
+			-- is missing or required, ensure it is set. If a gateway rejects reasoning_content as
+			-- an unknown/unsupported parameter, drop it.
 			match = "reasoning_content",
 			apply = function(body, message)
 				local lowered = tostring(message or ""):lower()
@@ -1442,7 +1474,7 @@ return function(env)
 					return nil
 				end
 
-				
+				-- Required in thinking mode: ensure reasoning_content is present on all assistant messages
 				local fixed = 0
 				for _, msg in ipairs(body.messages or {}) do
 					if type(msg) == "table" and msg.role == "assistant" then
@@ -1479,20 +1511,20 @@ return function(env)
 		},
 	}
 
-	
-	
-	
-	
-	
-	
+	-- Repairs that change the shape of message content rather than a top-level
+	-- parameter. AgentRouter and other NewAPI gateways multiplex several backends
+	-- behind one endpoint, and the two backends disagree about content shape: one
+	-- demands thinking blocks, the other rejects them. A remembered content repair
+	-- would replay onto whichever backend the next turn happens to hit and fail
+	-- there, so these are applied per refusal and never saved to the record.
 	local EPHEMERAL_REPAIRS = {
-		["content[].thinking"] = true,
-		["revert_thinking_blocks"] = true,
+		modulos["content[].thinking"] = true,
+		modulos["revert_thinking_blocks"] = true,
 	}
 
 	local function repair(body, message)
-		
-		
+		-- A context error often mentions max_tokens too. It needs shorter history,
+		-- not output-ceiling repairs that would learn the wrong limit.
 		if M.contextWindowFromMessage(message) then return nil end
 		local lowered = tostring(message or ""):lower()
 		for _, entry in ipairs(REPAIRS) do
@@ -1504,8 +1536,8 @@ return function(env)
 		return nil
 	end
 
-	
-	
+	-- Exposed for tests: repair mutates the body in place and returns the note and
+	-- key the dispatch loop would act on, without needing a live transport.
 	M.repairForTest = repair
 
 	local function applyRemembered(record, body)
@@ -1525,15 +1557,15 @@ return function(env)
 		registry.save(record, { force = true })
 	end
 
-	
-	
-	
-	
-	
-	
-	
-	
-	
+	-- Performs one completion against one provider. Returns result, nil on success
+	-- or nil, message on failure. Retries inside net/http cover transport and
+	-- 5xx/429; the provider chain above this handles a dead endpoint.
+	--
+	-- A record with several keys gets one more layer: a 429 or quota refusal
+	-- benches the key that carried it and re-fires on the next key immediately.
+	-- No sleep, because the refusal arrived in milliseconds and the next key's
+	-- quota is untouched -- waiting would only spend the wall clock the reply
+	-- still has to fit inside.
 	local function quotaRefusal(res)
 		if not res then return false end
 		if res.status == 429 then return true end
@@ -1564,8 +1596,8 @@ return function(env)
 		local currentKeyIndex = 0
 
 		local function rebuildHeaders()
-			
-			
+			-- With a pool, the key is chosen per attempt; without one this is the
+			-- record's own key and nothing changes from before the pool existed.
 			if #pool > 1 then
 				currentKey = registry.nextKey(record)
 				for index, key in ipairs(pool) do
@@ -1585,15 +1617,15 @@ return function(env)
 		local lastRequestMs = 0
 		local attemptsAllowed = request.attempts or config.get("agent.retries", 3)
 		local rotationsLeft = math.max(#pool - 1, 0)
-		
-		
-		
-		
+		-- With a pool, a 429 belongs to the rotation above, not to the transport's
+		-- backoff: sleeping on an exhausted key spends the wall clock the reply still
+		-- needs, and the next key answers at once. Without a pool the flag is nil and
+		-- the transport behaves exactly as it always has.
 		local skip429 = (#pool > 1) and { [429] = true } or nil
 
 		local function fire(payload)
-			
-			
+			-- A socket is only used when the record names one and the host has
+			-- WebSocket support; otherwise the SSE body arrives whole over HTTP.
 			local web = config.get("bridge.enabled", false) and config.get("bridge.runtime", "game") == "web"
 			if not web and wantStream and util.trim(record.wsUrl) ~= "" and caps.ws then
 				local ws = env.require("net/ws")
@@ -1609,8 +1641,8 @@ return function(env)
 					body = payload,
 					aborted = request.aborted,
 					onFrame = request.onFrame,
-					
-					
+					-- Same deadline as the HTTP path: a long think is not a failure, and the
+					-- socket only ends the exchange when this runs out.
 					timeout = requestTimeout(request),
 				})
 				if streamBody then
@@ -1635,8 +1667,8 @@ return function(env)
 				aborted = request.aborted,
 				onRetry = request.onRetry,
 				tag = "chat:" .. record.id,
-				
-				
+				-- The one deadline that matters for a reasoning model: nothing arrives
+				-- until it finishes thinking, so this has to outlast the think.
 				timeout = requestTimeout(request),
 			})
 			lastRequestMs = clock.since(requestStarted)
@@ -1666,13 +1698,13 @@ return function(env)
 		end
 
 		local res, err = fireWithRotation(body)
-		
-		
-		
-		
-		
-		
-		
+		-- A gateway names a bad field in a 400, and a NewAPI gateway names a bad
+		-- content variant in a 422. Both are repairable, and both can chain: a
+		-- gateway that multiplexes backends can refuse the very shape a sibling
+		-- backend just demanded, so a single repair is not enough -- the reversal
+		-- has to get its own retry. Bounded so a gateway that flip-flops between
+		-- two backends cannot spin here forever; when the budget runs out the body
+		-- falls through to the normal failure path and the chain moves on.
 		local repairsLeft = 4
 		while res and (res.status == 400 or res.status == 422) and repairsLeft > 0 do
 			repairsLeft = repairsLeft - 1
@@ -1681,8 +1713,8 @@ return function(env)
 			if not note then break end
 			log.info("provider", record.label .. ": " .. note .. ", retrying")
 			if key == "max_tokens" then
-				
-				
+				-- A value, not a switch, so it cannot ride in record.repairs -- that
+				-- list replays a key with no error text to read a number out of.
 				M.rememberMaxTokens(record, body.max_tokens or body.max_completion_tokens)
 			elseif not EPHEMERAL_REPAIRS[key] then
 				remember(record, key)
@@ -1693,14 +1725,14 @@ return function(env)
 			res, err = fireWithRotation(body)
 		end
 
-		
-		
-		
-		
-		
-		
-		
-		
+		-- The executor's transport wall: no body, no headers, an executor raise for
+		-- the error text, and no config value can lift that wall because the option
+		-- was never honoured. Retry once with a smaller ask -- less thinking, half the
+		-- reply ceiling -- so the model finishes inside the wall instead of dying at
+		-- it. Only when an HTTP request produced nothing after 20-130 seconds,
+		-- and only when the smaller ask is actually smaller: a
+		-- deadline on an already-minimal body would re-send the same prompt to the
+		-- same wall, and that is the one outcome this must not do.
 		local recoveredTokens
 		if not res and err and err ~= "aborted" and lastRequestMs >= 20000 and lastRequestMs <= 130000 then
 			local lowered, note = smallerAsk(body)
@@ -1747,14 +1779,14 @@ return function(env)
 		local hasText = util.trim(parsed.content) ~= ""
 		local hasCalls = #(parsed.toolCalls or {}) > 0
 		if not hasText and not hasCalls and util.trim(parsed.reasoning) == "" then
-			
-			
+			-- An empty completion is not an error the model can act on, so it is
+			-- reported as a failure and the chain may try elsewhere.
 			local message = "the provider returned an empty completion"
 			registry.markFail(record, message)
 			return nil, message, res
 		end
 
-		
+		-- A 200 with an error, malformed JSON or an empty completion did not recover.
 		if recoveredTokens then
 			M.rememberMaxTokens(record, recoveredTokens)
 			log.info("provider", record.label .. ": smaller request succeeded; remembered max_tokens " .. tostring(recoveredTokens))
@@ -1773,10 +1805,16 @@ return function(env)
 end
 end)()
 
+-- ==========================================================================
+-- provider/registry
+-- ==========================================================================,
 
-    ["provider/registry"] = (function()
-
-
+    modulos["provider/registry"] = (function()
+-- Provider records: creation, validation, persistence, health and fallback order.
+--
+-- A record is the whole description of one endpoint, so switching provider is a
+-- data change rather than a code path. Nothing above this module knows which
+-- vendor is in use.
 return function(env)
 	local util = env.require("runtime/util")
 	local config = env.require("runtime/config")
@@ -1793,27 +1831,27 @@ return function(env)
 		changed = signal.new("providers"),
 	}
 
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
+	-- Key pool ------------------------------------------------------------
+	--
+	-- One record may carry several keys, pasted one per line (or comma
+	-- separated). The pool is what beats a free-tier RPM ceiling: Google AI
+	-- Studio hands out keys in batches and caps each at 10-15 requests a
+	-- minute, so N keys in one record is N times the ceiling with no second
+	-- provider to configure.
+	--
+	-- The selection is sticky, not round-robin: the same key is used until it
+	-- is rate limited, then the next one takes over instantly. Round-robin
+	-- would spread the limit evenly but also spend every key's quota on
+	-- requests a single exhausted key could have answered, and it makes a
+	-- genuinely dead key indistinguishable from a cooling one.
 	local KEY_COOLDOWN_SECONDS = 30
 
 	function M.keysOf(record)
 		local raw = tostring(record and record.apiKey or "")
 		local keys, seen = {}, {}
-		
-		
-		
+		-- Line breaks are the primary form (that is what a multi-line paste
+		-- produces); commas are accepted because a user who was handed
+		-- "key1,key2" should not have to edit it.
 		for token in raw:gmatch("[^\r\n,]+") do
 			local key = util.trim(token)
 			if key ~= "" and not seen[key] then
@@ -1828,20 +1866,20 @@ return function(env)
 		return #M.keysOf(record)
 	end
 
-	
-	
-	
-	
+	-- Rotation state is kept on the record, not in this module's memory, so it
+	-- survives nothing it should not and is visible to the health views. It is
+	-- deliberately NOT persisted to config: which key is current is a fact about
+	-- this session, and a saved index would be stale on the next start.
 	local function keyState(record)
 		record.keyRotation = record.keyRotation or { index = 1, cooldowns = {} }
 		return record.keyRotation
 	end
 
-	
-	
-	
-	
-	
+	-- The key a request should use. Sticky: the current index unless that key
+	-- is on cooldown, then the next one that is not. When every key is cooling,
+	-- the one whose cooldown expires soonest -- a pool that is entirely spent
+	-- is a pool that was just load-balanced, and waiting out the shortest
+	-- remaining bench is faster than hammering any single key.
 	function M.nextKey(record)
 		local keys = M.keysOf(record)
 		if #keys == 0 then return nil end
@@ -1854,7 +1892,7 @@ return function(env)
 			return until_ == nil or until_ <= now
 		end
 
-		
+		-- Walk the pool from the current index, wrapping once.
 		for offset = 0, #keys - 1 do
 			local index = ((state.index - 1 + offset) % #keys) + 1
 			if ready(index) then
@@ -1863,7 +1901,7 @@ return function(env)
 			end
 		end
 
-		
+		-- All cooling: soonest to expire.
 		local best, bestAt = nil, math.huge
 		for index = 1, #keys do
 			local until_ = state.cooldowns[keys[index]] or 0
@@ -1874,8 +1912,8 @@ return function(env)
 		return best
 	end
 
-	
-	
+	-- Bench one key after it was refused. `seconds` may be overridden by a
+	-- caller that read a Retry-After header, which outranks our default.
 	function M.cooldownKey(record, key, seconds)
 		local keys = M.keysOf(record)
 		if #keys < 2 then return false end
@@ -1890,12 +1928,12 @@ return function(env)
 		return state.cooldowns
 	end
 
-	
-	
-	
-	
-	
-	
+	-- Base URL normalisation, done once on save so no request path has to guess.
+	--
+	--   api.openai.com            -> https://api.openai.com/v1
+	--   https://x.dev/            -> https://x.dev/v1
+	--   https://x.dev/openai/v1   -> unchanged (it already names a path)
+	--   https://x.dev/v1/chat/completions -> unchanged, used verbatim
 	function M.normaliseBaseUrl(raw)
 		local text = util.trim(raw)
 		if text == "" then return "" end
@@ -1945,7 +1983,7 @@ return function(env)
 		return { ["Authorization"] = "Bearer " .. key }
 	end
 
-	
+	-- OpenCode compatibility metadata belongs only to the official host.
 	function M.isOpencode(record)
 		local base = util.trim(tostring(record and record.baseUrl or "")):lower()
 		local authority = base:match("^https?://([^/%?#]+)")
@@ -1953,7 +1991,7 @@ return function(env)
 		return authority == "opencode.ai" or authority:match("^opencode%.ai:%d+$") ~= nil
 	end
 
-	
+	-- Host based so manually entered gateways keep the same required identity.
 	function M.requiresClaude(record)
 		local base = util.trim(tostring(record and record.baseUrl or "")):lower()
 		local authority = base:match("^https?://([^/%?#]+)")
@@ -1963,8 +2001,8 @@ return function(env)
 	end
 
 	function M.identityFor(record)
-		
-		
+		-- A manually entered Zen endpoint gets the same compatibility identity as
+		-- the preset without competing Claude/Stainless headers.
 		if M.isOpencode(record) then return "none" end
 		if M.requiresClaude(record) then return "claude" end
 		return (record.claudeUa ~= false) and "claude" or "none"
@@ -2048,7 +2086,7 @@ return function(env)
 
 	function M.opencodeHeaders(record, context)
 		if not M.isOpencode(record) then return {} end
-		
+		-- Match the current upstream CLI defaults; saved overrides remain supported.
 		local version, client = "1.18.31", "cli"
 		if type(record.opencode) == "table" then
 			local configuredVersion = util.trim(tostring(record.opencode.version or ""))
@@ -2058,15 +2096,15 @@ return function(env)
 		end
 		local sessionId = M.opencodeSessionFor(record, context)
 		return {
-			["x-opencode-session"] = sessionId,
-			["x-opencode-request"] = opencodeId("req_"),
-			["x-opencode-project"] = "global",
-			["x-opencode-client"] = client,
-			["User-Agent"] = "opencode/" .. version,
+			modulos["x-opencode-session"] = sessionId,
+			modulos["x-opencode-request"] = opencodeId("req_"),
+			modulos["x-opencode-project"] = "global",
+			modulos["x-opencode-client"] = client,
+			modulos["User-Agent"] = "opencode/" .. version,
 		}
 	end
 
-	
+	-- A record always has every field, so no consumer needs a nil check.
 	function M.blank(presetId)
 		local preset = catalog.get(presetId or "custom") or catalog.get("custom")
 		return {
@@ -2076,8 +2114,8 @@ return function(env)
 			baseUrl = preset.baseUrl,
 			apiKey = "",
 			authStyle = preset.authStyle or "bearer",
-			
-			
+			-- Which wire protocol the record speaks. Absent means chat completions,
+			-- which is what every record saved before the second adapter existed has.
 			api = preset.api or "openai",
 			models = util.deepCopy(preset.models or {}),
 			model = (preset.models or {})[1] or "",
@@ -2086,9 +2124,9 @@ return function(env)
 			query = util.deepCopy(preset.query or {}),
 
 			stream = true,
-			
-			
-			
+			-- `~= false` rather than an and/or chain: `(x == false) and false or true`
+			-- is still true when x is false, which is the trap both forms of this line
+			-- fell into. A preset's deliberate `false` has to survive the copy.
 			claudeUa = preset.claudeUa ~= false,
 			enabled = true,
 			order = 0,
@@ -2137,9 +2175,9 @@ return function(env)
 		return #M.list()
 	end
 
-	
-	
-	
+	-- Validation is deliberately about reachability, not taste: a record with a
+	-- plausible URL and, where needed, a key is allowed even if the vendor turns
+	-- out to reject it. The health counters are what report that.
 	function M.validate(record)
 		local problems = {}
 		if util.trim(record.label) == "" then problems[#problems + 1] = "give the provider a name" end
@@ -2152,8 +2190,8 @@ return function(env)
 		if (record.authStyle or "bearer") ~= "none" and util.trim(record.apiKey) == "" then
 			problems[#problems + 1] = "an API key is required for this auth style"
 		end
-		
-		
+		-- Azure takes the model from the deployment in the URL; everyone else needs
+		-- one named, and nothing here will guess it.
 		if record.preset ~= "azure" and util.trim(record.model) == "" then
 			problems[#problems + 1] = "fetch the model list or add a model id"
 		end
@@ -2257,7 +2295,7 @@ return function(env)
 		return false
 	end
 
-	
+	-- Health -----------------------------------------------------------------
 
 	local function health(record)
 		record.health = record.health or { ok = 0, fail = 0, streak = 0, lastError = "", cooldownUntil = 0 }
@@ -2274,9 +2312,9 @@ return function(env)
 		M.changed:fire("health", record)
 	end
 
-	
-	
-	
+	-- Consecutive failures put a provider on the bench rather than the first one:
+	-- a single 500 from an otherwise healthy endpoint is noise, and demoting on it
+	-- would flap the active provider on every hiccup.
 	function M.markFail(record, message)
 		local state = health(record)
 		state.fail = state.fail + 1
@@ -2294,9 +2332,9 @@ return function(env)
 		return (state.cooldownUntil or 0) > clock.ms()
 	end
 
-	
-	
-	
+	-- Ordered attempt list: the active provider, then every other enabled one that
+	-- is not cooling down, then -- if that leaves nothing -- the cooling ones
+	-- anyway, because refusing to try at all is worse than trying a bad endpoint.
 	function M.chain()
 		local out = {}
 		local seen = {}
@@ -2335,66 +2373,79 @@ return function(env)
 end
 end)()
 
+-- ==========================================================================
+-- provider/traits
+-- ==========================================================================,
 
-    ["provider/traits"] = (function()
-
-
+    modulos["provider/traits"] = (function()
+-- What a model accepts, and how much it can hold.
+--
+-- Every gateway claims to be OpenAI-compatible and none of them publishes
+-- capabilities: /models returns ids, not limits. So the facts that change how a
+-- request must be built live here, in one table, rather than being rediscovered
+-- from a 400 at each call site.
+--
+-- Matched by longest substring, the same way `usage.priceFor` resolves a price,
+-- because gateways prefix and suffix ids freely -- "anthropic/claude-opus-5",
+-- "claude-opus-5-1m", a dated snapshot -- and an exact-match table would miss
+-- every one of them. Only families this client has a documented fact about appear;
+-- an unknown id resolves to an empty trait set, which means "behave as before".
 return function(env)
 	local config = env.require("runtime/config")
 
 	local M = {}
 
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
+	-- context  the input window, in tokens.
+	-- output   the ceiling on a single reply, in tokens.
+	-- sampling false only where temperature/top_p/top_k are *rejected* rather than
+	--          ignored. Absent means "send them", which is what every other model
+	--          in this client has always had.
+	-- effort   the levels `output_config.effort` accepts, cheapest first, or absent
+	--          where the model has no effort control.
+	-- thinking "adaptive" for models that reason without a token budget and take
+	--          `{ type = "adaptive" }`; "budget" for the older shape that requires
+	--          `budget_tokens`. Absent means the model does not expose reasoning.
+	-- default  the effort level the API itself uses when none is sent, so the
+	--          interface can mark it rather than implying the client picked it.
 	local FIVE = { "low", "medium", "high", "xhigh", "max" }
 	local FOUR = { "low", "medium", "high", "max" }
 
 	local TRAITS = {
-		["claude-fable-5-1"] = { context = 1000000, output = 128000, sampling = false,
+		modulos["claude-fable-5-1"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high", alwaysThinks = true },
-		["claude-mythos-5-1"] = { context = 1000000, output = 128000, sampling = false,
+		modulos["claude-mythos-5-1"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high", alwaysThinks = true },
-		["claude-fable-5"] = { context = 1000000, output = 128000, sampling = false,
+		modulos["claude-fable-5"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high", alwaysThinks = true },
-		
-		
-		["claude-opus-5"] = { context = 1000000, output = 128000, sampling = false,
+		-- Opus 5 thinks by default, unlike 4.8 and 4.7, and refuses a disabled
+		-- thinking block above effort "high".
+		modulos["claude-opus-5"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
-		["claude-opus-4-8"] = { context = 1000000, output = 128000, sampling = false,
+		modulos["claude-opus-4-8"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
-		["claude-opus-4-7"] = { context = 1000000, output = 128000, sampling = false,
+		modulos["claude-opus-4-7"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
-		
-		
-		["claude-opus-4-6"] = { context = 1000000, output = 128000,
+		-- 4.6 is the last generation that still takes sampling parameters, and its
+		-- effort scale has no "xhigh".
+		modulos["claude-opus-4-6"] = { context = 1000000, output = 128000,
 			effort = FOUR, thinking = "adaptive", default = "high" },
-		["claude-sonnet-5"] = { context = 1000000, output = 128000, sampling = false,
+		modulos["claude-sonnet-5"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
-		["claude-sonnet-4-6"] = { context = 1000000, output = 128000,
+		modulos["claude-sonnet-4-6"] = { context = 1000000, output = 128000,
 			effort = FOUR, thinking = "adaptive", default = "high" },
-		["claude-haiku-4-5"] = { context = 200000 },
+		modulos["claude-haiku-4-5"] = { context = 200000 },
 	}
 
 	local EMPTY = {}
 
-	
-	
-	
-	
-	
-	
-	
-	
+	-- What the user has told this client to assume about a model id, in place of
+	-- what this table documents. Gateways relay ids this table has never heard of
+	-- -- "openrouter/qwen3-235b", a relay's own spelling of a frontier model -- and
+	-- the honest answer to those used to be "no reasoning, no badge", when the user
+	-- knows perfectly well the model behind the id thinks and holds a million tokens.
+	-- `agent.forceReasoning` / `agent.forceContext` are those two claims, keyed by
+	-- the lowercased model id. A forced context also feeds what the sliders clamp
+	-- against, which is what makes a 1M setting real rather than decorative.
 	local function forced(model)
 		local id = tostring(model or ""):lower()
 		if id == "" then return nil end
@@ -2428,9 +2479,9 @@ return function(env)
 		return M.of(model).output
 	end
 
-	
-	
-	
+	-- True unless the model is documented to reject them. Withholding a parameter a
+	-- model would have accepted changes behaviour for every gateway this client
+	-- talks to, so silence is not the safe default here -- only a known refusal is.
 	function M.allowsSampling(model)
 		return M.of(model).sampling ~= false
 	end
@@ -2443,16 +2494,16 @@ return function(env)
 		return M.of(model).default
 	end
 
-	
-	
-	
+	-- The nearest level this model actually has, never rounding up: asking for
+	-- "xhigh" on a scale that stops at "high" must land on "high" rather than
+	-- spending "max", because the setting is a ceiling the user chose.
 	local RANK = { low = 1, medium = 2, high = 3, xhigh = 4, max = 5 }
 
 	function M.nearestEffort(model, wanted)
 		local levels = M.effortLevels(model)
-		
-		
-		
+		-- A model with no documented scale but a manual reasoning claim has no
+		-- levels to clamp against, so the wanted level passes through: the user
+		-- said it reasons, and this client has no basis to round them down.
 		if not levels then
 			if M.thinkingStyle(model) then return tostring(wanted or "") ~= "" and wanted or nil end
 			return nil
@@ -2465,8 +2516,8 @@ return function(env)
 			if rank == target then return level end
 			if rank and rank < target and (not best or RANK[best] < rank) then best = level end
 		end
-		
-		
+		-- Every level this model has sits above what was asked for, so the cheapest
+		-- of them is the closest thing to it.
 		return best or levels[1]
 	end
 
@@ -2482,9 +2533,9 @@ return function(env)
 		return M.of(model).alwaysThinks == true
 	end
 
-	
-	
-	
+	-- A short badge for the model pickers: "1M", "200K". Nil when unknown, so a
+	-- row for an id this table has never heard of simply has no badge. A manually
+	-- declared context is a fact the user stated, so it earns the same badge.
 	function M.badge(model)
 		local context = M.contextWindow(model)
 		if not context then return nil end
@@ -2503,5 +2554,8 @@ return function(env)
 end
 end)()
 
+-- ==========================================================================
+-- runtime/attachments
+-- ==========================================================================,
 
-}
+return modulos
