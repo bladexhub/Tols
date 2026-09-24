@@ -1,9 +1,8 @@
 -- BLADEX UAI - proveedores
 -- Remote UAI modules. Loaded by the main loader.
 
-local modulos = {}
-
-    modulos["provider/anthropic"] = (function()
+return {
+    ["provider/anthropic"] = (function()
 -- The Anthropic Messages adapter.
 --
 -- Same contract as provider/openai: one request in, one normalised result out. The
@@ -288,7 +287,7 @@ return function(env)
 					calls[#calls + 1] = {
 						id = block.id,
 						type = "function",
-						modulos["function"] = {
+						["function"] = {
 							name = block.name,
 							arguments = util.encode(block.input or util.emptyObject()),
 						},
@@ -436,7 +435,7 @@ return function(env)
 				calls[#calls + 1] = {
 					id = slot.id or ("toolu_" .. tostring(slot.index)),
 					type = "function",
-					modulos["function"] = { name = slot.name, arguments = arguments },
+					["function"] = { name = slot.name, arguments = arguments },
 				}
 				local input = util.decode(arguments)
 				if type(input) ~= "table" or util.count(input) == 0 then input = util.emptyObject() end
@@ -662,7 +661,7 @@ end)(),
 -- provider/catalog
 -- ==========================================================================,
 
-    modulos["provider/chat"] = (function()
+    ["provider/chat"] = (function()
 -- Picks the wire protocol for a provider record.
 --
 -- Two adapters implement the same contract -- provider/openai for anything speaking
@@ -732,7 +731,7 @@ end)(),
 -- provider/models
 -- ==========================================================================,
 
-    modulos["provider/openai"] = (function()
+    ["provider/openai"] = (function()
 -- The OpenAI chat-completions adapter.
 --
 -- One request shape in, one normalised result out. Everything vendor-specific
@@ -828,7 +827,7 @@ return function(env)
 						entry.tool_calls[#entry.tool_calls + 1] = {
 							id = call.id,
 							type = "function",
-							modulos["function"] = {
+							["function"] = {
 								name = call["function"] and call["function"].name or call.name,
 								arguments = call["function"] and call["function"].arguments or call.arguments or "{}",
 							},
@@ -859,7 +858,7 @@ return function(env)
 	local OPENCODE_TOOLS = {
 		{
 			type = "function",
-			modulos["function"] = {
+			["function"] = {
 				name = "bash",
 				description = "Execute bash command",
 				parameters = {
@@ -873,7 +872,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			modulos["function"] = {
+			["function"] = {
 				name = "read",
 				description = "Read file",
 				parameters = {
@@ -887,7 +886,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			modulos["function"] = {
+			["function"] = {
 				name = "edit",
 				description = "Edit file",
 				parameters = {
@@ -901,7 +900,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			modulos["function"] = {
+			["function"] = {
 				name = "glob",
 				description = "Find files",
 				parameters = {
@@ -915,7 +914,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			modulos["function"] = {
+			["function"] = {
 				name = "grep",
 				description = "Search pattern",
 				parameters = {
@@ -929,7 +928,7 @@ return function(env)
 		},
 		{
 			type = "function",
-			modulos["function"] = {
+			["function"] = {
 				name = "list",
 				description = "List files",
 				parameters = {
@@ -1518,8 +1517,8 @@ return function(env)
 	-- would replay onto whichever backend the next turn happens to hit and fail
 	-- there, so these are applied per refusal and never saved to the record.
 	local EPHEMERAL_REPAIRS = {
-		modulos["content[].thinking"] = true,
-		modulos["revert_thinking_blocks"] = true,
+		["content[].thinking"] = true,
+		["revert_thinking_blocks"] = true,
 	}
 
 	local function repair(body, message)
@@ -1809,7 +1808,7 @@ end)(),
 -- provider/registry
 -- ==========================================================================,
 
-    modulos["provider/registry"] = (function()
+    ["provider/registry"] = (function()
 -- Provider records: creation, validation, persistence, health and fallback order.
 --
 -- A record is the whole description of one endpoint, so switching provider is a
@@ -2096,11 +2095,11 @@ return function(env)
 		end
 		local sessionId = M.opencodeSessionFor(record, context)
 		return {
-			modulos["x-opencode-session"] = sessionId,
-			modulos["x-opencode-request"] = opencodeId("req_"),
-			modulos["x-opencode-project"] = "global",
-			modulos["x-opencode-client"] = client,
-			modulos["User-Agent"] = "opencode/" .. version,
+			["x-opencode-session"] = sessionId,
+			["x-opencode-request"] = opencodeId("req_"),
+			["x-opencode-project"] = "global",
+			["x-opencode-client"] = client,
+			["User-Agent"] = "opencode/" .. version,
 		}
 	end
 
@@ -2377,7 +2376,7 @@ end)(),
 -- provider/traits
 -- ==========================================================================,
 
-    modulos["provider/traits"] = (function()
+    ["provider/traits"] = (function()
 -- What a model accepts, and how much it can hold.
 --
 -- Every gateway claims to be OpenAI-compatible and none of them publishes
@@ -2411,29 +2410,29 @@ return function(env)
 	local FOUR = { "low", "medium", "high", "max" }
 
 	local TRAITS = {
-		modulos["claude-fable-5-1"] = { context = 1000000, output = 128000, sampling = false,
+		["claude-fable-5-1"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high", alwaysThinks = true },
-		modulos["claude-mythos-5-1"] = { context = 1000000, output = 128000, sampling = false,
+		["claude-mythos-5-1"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high", alwaysThinks = true },
-		modulos["claude-fable-5"] = { context = 1000000, output = 128000, sampling = false,
+		["claude-fable-5"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high", alwaysThinks = true },
 		-- Opus 5 thinks by default, unlike 4.8 and 4.7, and refuses a disabled
 		-- thinking block above effort "high".
-		modulos["claude-opus-5"] = { context = 1000000, output = 128000, sampling = false,
+		["claude-opus-5"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
-		modulos["claude-opus-4-8"] = { context = 1000000, output = 128000, sampling = false,
+		["claude-opus-4-8"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
-		modulos["claude-opus-4-7"] = { context = 1000000, output = 128000, sampling = false,
+		["claude-opus-4-7"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
 		-- 4.6 is the last generation that still takes sampling parameters, and its
 		-- effort scale has no "xhigh".
-		modulos["claude-opus-4-6"] = { context = 1000000, output = 128000,
+		["claude-opus-4-6"] = { context = 1000000, output = 128000,
 			effort = FOUR, thinking = "adaptive", default = "high" },
-		modulos["claude-sonnet-5"] = { context = 1000000, output = 128000, sampling = false,
+		["claude-sonnet-5"] = { context = 1000000, output = 128000, sampling = false,
 			effort = FIVE, thinking = "adaptive", default = "high" },
-		modulos["claude-sonnet-4-6"] = { context = 1000000, output = 128000,
+		["claude-sonnet-4-6"] = { context = 1000000, output = 128000,
 			effort = FOUR, thinking = "adaptive", default = "high" },
-		modulos["claude-haiku-4-5"] = { context = 200000 },
+		["claude-haiku-4-5"] = { context = 200000 },
 	}
 
 	local EMPTY = {}
@@ -2552,10 +2551,9 @@ return function(env)
 
 	return M
 end
-end)(),
+end)()
 
 -- ==========================================================================
 -- runtime/attachments
 -- ==========================================================================,
-
-return modulos
+}
