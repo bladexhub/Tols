@@ -656,7 +656,7 @@ return function(env)
 	end
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- provider/catalog
@@ -726,7 +726,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- provider/models
@@ -1803,7 +1803,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- provider/registry
@@ -2371,7 +2371,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- provider/traits
@@ -2552,7 +2552,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- runtime/attachments

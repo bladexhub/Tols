@@ -8612,7 +8612,7 @@ return function(env)
 	M.PRICES = PRICES
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- agent/prompt
@@ -8861,7 +8861,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- provider/chat
@@ -9044,7 +9044,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
 -- ==========================================================================
 -- provider/openai

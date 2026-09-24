@@ -826,7 +826,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
     modulos["ui/instance_icons"] = (function()
 
@@ -947,7 +947,7 @@ return function(env)
 
 	return M
 end
-end)()
+end)(),
 
 
 return modulos
