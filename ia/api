@@ -4,6 +4,7 @@ local State, Chat, Storage = E.State, E.Chat, E.Storage
 local UI, CoreUI = E.UI, E.CoreUI
 local Models, OpenRouter = E.Models, E.OpenRouter
 local GameScanner, Context, SystemPrompt = E.GameScanner, E.Context, E.SystemPrompt
+local Providers = E.Providers
 
 local BLADEX = {}
 BLADEX.State = State
@@ -11,6 +12,7 @@ BLADEX.Chat = Chat
 BLADEX.Storage = Storage
 BLADEX.UI = UI
 BLADEX.OpenRouter = OpenRouter
+BLADEX.Providers = Providers
 BLADEX.Models = Models
 BLADEX.IconLoader = E.IconLoader
 BLADEX.AudioLoader = E.AudioLoader
@@ -20,22 +22,96 @@ BLADEX.GameScanner = GameScanner
 BLADEX.Context = Context
 BLADEX.SystemPrompt = SystemPrompt
 
-function BLADEX:SetApiKey(k) if Utils.IsEmpty(k) then return { success = false, error = { code = "EMPTY", message = "Key vacia." } } end State:Set("settings.apiKey", Utils.Trim(k)) Chat:Save() task.spawn(function() if Models then Models:Fetch() end end) return { success = true } end
-function BLADEX:SetModel(m) if Utils.IsEmpty(m) then return { success = false, error = { code = "EMPTY", message = "Modelo vacio." } } end State:Set("settings.model", Utils.Trim(m)) Chat:Save() return { success = true } end
-function BLADEX:SetTemperature(t) t = math.clamp(tonumber(t) or 0.7, 0, 2) State:Set("settings.temperature", t) Chat:Save() return { success = true, value = t } end
-function BLADEX:LoadModels() if not Models then return { success = false, error = { code = "NO_MODULE", message = "Models no cargado." } } end return Models:Fetch() end
+-- ==== API Keys por proveedor ====
+function BLADEX:SetApiKey(k)
+    if Utils.IsEmpty(k) then return { success = false, error = { code = "EMPTY", message = "Key vacia." } } end
+    local providerId = State:Get("settings.provider") or "openrouter"
+    local keys = State:Get("settings.apiKeys") or {}
+    keys[providerId] = Utils.Trim(k)
+    State:Set("settings.apiKeys", keys)
+    State:Set("settings.apiKey", Utils.Trim(k))
+    Chat:Save()
+    task.spawn(function() if Models then Models:Fetch() end end)
+    return { success = true, provider = providerId }
+end
+function BLADEX:SetApiKeyForProvider(providerId, k)
+    if not Providers or not Providers.config[providerId] then
+        return { success = false, error = { code = "INVALID_PROVIDER", message = "Proveedor inválido." } }
+    end
+    if Utils.IsEmpty(k) then return { success = false, error = { code = "EMPTY", message = "Key vacia." } } end
+    local keys = State:Get("settings.apiKeys") or {}
+    keys[providerId] = Utils.Trim(k)
+    State:Set("settings.apiKeys", keys)
+    Chat:Save()
+    return { success = true, provider = providerId }
+end
+function BLADEX:GetApiKeyForProvider(providerId)
+    local keys = State:Get("settings.apiKeys") or {}
+    return keys[providerId] or ""
+end
+
+-- ==== Proveedores ====
+function BLADEX:SetProvider(id)
+    if not Providers or not Providers.config[id] then
+        return { success = false, error = { code = "INVALID_PROVIDER", message = "Proveedor desconocido: " .. tostring(id) } }
+    end
+    State:Set("settings.provider", id)
+    State:Set("settings.model", "")
+    -- Sincronizar apiKey activa
+    local keys = State:Get("settings.apiKeys") or {}
+    if keys[id] then State:Set("settings.apiKey", keys[id]) end
+    Chat:Save()
+    task.spawn(function() if Models then Models:Fetch() end end)
+    return { success = true, provider = id, name = Providers.config[id].name }
+end
+function BLADEX:GetProvider() return State:Get("settings.provider") or "openrouter" end
+function BLADEX:GetProviders() return Providers and Providers:List() or {} end
+function BLADEX:GetProviderModels(id) return Providers and Providers:GetModels(id) or {} end
+function BLADEX:GetProviderFallbacks(id) return Providers and Providers:GetFallbacks(id) or {} end
+function BLADEX:TestProvider(id, key)
+    if not Providers then return { success = false, error = { code = "NO_PROVIDER", message = "Módulo Providers no cargado." } } end
+    return Providers:TestConnection(id, key)
+end
+
+-- ==== Modelos ====
+function BLADEX:SetModel(m)
+    if Utils.IsEmpty(m) then return { success = false, error = { code = "EMPTY", message = "Modelo vacio." } } end
+    State:Set("settings.model", Utils.Trim(m))
+    Chat:Save()
+    return { success = true }
+end
+function BLADEX:SetTemperature(t)
+    t = math.clamp(tonumber(t) or 0.7, 0, 2)
+    State:Set("settings.temperature", t)
+    Chat:Save()
+    return { success = true, value = t }
+end
+function BLADEX:LoadModels()
+    if not Models then return { success = false, error = { code = "NO_MODULE", message = "Models no cargado." } } end
+    return Models:Fetch()
+end
 function BLADEX:GetModels() return Models and Models.list or {} end
+function BLADEX:PickModel() return E.PickBestModel() end
+
+-- ==== Chat ====
 function BLADEX:Send(text) return Chat:Send(text) end
 function BLADEX:Cancel() return Chat:Cancel() end
 function BLADEX:ClearHistory() Chat:Clear() return { success = true } end
 function BLADEX:GetHistory() return Utils.Copy(Chat.messages) end
+
+-- ==== UI ====
 function BLADEX:Show() return UI:Mount() end
 function BLADEX:Hide() UI:_destroy() end
 function BLADEX:Minimize(v) return UI:Minimize(v) end
+function BLADEX:AddConsoleLine(text, color) return UI:_codeAppendLine(text, color) end
+
+-- ==== Storage ====
 function BLADEX:SaveFile(name, data) return Storage:SaveFile(name, data) end
 function BLADEX:LoadFile(name) return Storage:LoadFile(name) end
 function BLADEX:GetStoragePath() return Storage:Path() end
 function BLADEX:GetStorageDir() return Storage:Dir() end
+
+-- ==== CoreUI / Juego ====
 function BLADEX:HideGameUI(v) CoreUI:SetVisible(v == true) return { success = true } end
 function BLADEX:ShowGameUI() CoreUI:Restore() return { success = true } end
 function BLADEX:ScanGame() return GameScanner:Scan() end
@@ -44,8 +120,6 @@ function BLADEX:GetGameStats() return Utils.Copy(GameScanner.stats) end
 function BLADEX:FindInGame(kw) return GameScanner:FindByKeyword(kw) end
 function BLADEX:BuildContext(text) return Context:Build(text) end
 function BLADEX:ReloadSystemPrompt() return SystemPrompt:Load(true) end
-function BLADEX:PickModel() return E.PickBestModel() end
-function BLADEX:AddConsoleLine(text, color) return UI:_codeAppendLine(text, color) end
 
 E.BLADEX = BLADEX
 return E
