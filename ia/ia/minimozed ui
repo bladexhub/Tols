@@ -1,0 +1,210 @@
+-- MinimizedUI
+-- Sobrescribe UI:Minimize con una versión mejorada.
+-- Requiere: getgenv().__BLADEX con UI, State, Events
+
+local ENV = getgenv().__BLADEX
+if not ENV then error("[MinimizedUI] __BLADEX no disponible.") end
+
+local UI     = ENV.UI
+local State  = ENV.State
+local Events = ENV.Events
+
+local TweenService = game:GetService("TweenService")
+
+if type(UI) ~= "table" then
+    error("[MinimizedUI] UI no disponible.")
+end
+
+local CONFIG = {
+    duration      = 0.55,
+    ease          = Enum.EasingStyle.Quint,
+    direction     = Enum.EasingDirection.Out,
+    pillWidth     = 280,
+    pillHeight    = 56,
+    pillOffsetX   = 24,
+    pillOffsetY   = 20,
+    minWidth      = 240,
+    maxWidth      = 340,
+    restoreSize   = UDim2.new(0.92, 0, 0.86, 0),
+    restorePos    = UDim2.fromScale(0.5, 0.5),
+    restoreAnchor = Vector2.new(0.5, 0.5),
+    pillAnchor    = Vector2.new(0, 0),
+}
+
+local function getViewport()
+    local cam = workspace.CurrentCamera
+    if cam and cam.ViewportSize then return cam.ViewportSize end
+    return Vector2.new(1920, 1080)
+end
+
+local function hideList(refs)
+    return { refs.content, refs.tabsBar, refs.overlay }
+end
+
+function UI:Minimize(v)
+    local minimized = v == true
+    if self.refs.minimized == minimized then return end
+
+    if self.refs.minimized == true and minimized == false and self.refs.main then
+        self.refs._lastMinimizedPos = self.refs.main.Position
+        if ENV.Chat and ENV.Chat.Save then ENV.Chat:Save() end
+    end
+
+    self.refs.minimized = minimized
+    if not self.refs.main then return end
+
+    local main = self.refs.main
+    local t    = UI.Theme
+
+    local DURATION = CONFIG.duration
+    local EASE     = CONFIG.ease
+    local DIR      = CONFIG.direction
+
+    for _, obj in ipairs(hideList(self.refs)) do
+        if obj then obj.Visible = not minimized end
+    end
+
+    if self.refs.headerBottom then
+        self.refs.headerBottom.Visible = not minimized
+    end
+
+    if minimized then
+        if self.refs.backdrop then self.refs.backdrop.Visible = false end
+        TweenService:Create(main, TweenInfo.new(DURATION, EASE, DIR), {
+            BackgroundColor3       = t.panel,
+            BackgroundTransparency = t.panelTransparency,
+        }):Play()
+    else
+        if self.refs.backdrop then self.refs.backdrop.Visible = true end
+        TweenService:Create(main, TweenInfo.new(DURATION, EASE, DIR), {
+            BackgroundColor3       = t.bg,
+            BackgroundTransparency = t.bgTransparency,
+        }):Play()
+    end
+
+    if self.refs.particles then
+        if minimized then
+            pcall(function() self.refs.particles:SetEnabled(false) end)
+        else
+            local shouldEnable = State:Get("settings.dynamicBackground") == true
+                and State:Get("settings.lowPerformance") ~= true
+            pcall(function() self.refs.particles:SetEnabled(shouldEnable) end)
+        end
+    end
+
+    if self.refs.subtitle then
+        if minimized then
+            self.refs.subtitle.Visible = false
+        else
+            self.refs.subtitle.Visible = true
+            self.refs.subtitle.TextTransparency = 1
+            TweenService:Create(
+                self.refs.subtitle,
+                TweenInfo.new(DURATION * 0.7, Enum.EasingStyle.Quad, DIR),
+                { TextTransparency = 0 }
+            ):Play()
+        end
+    end
+
+    if self.refs.header then
+        TweenService:Create(
+            self.refs.header,
+            TweenInfo.new(DURATION, EASE, DIR),
+            {
+                BackgroundColor3       = minimized and t.bg or t.panel,
+                BackgroundTransparency = minimized and 0.05 or t.panelTransparency,
+            }
+        ):Play()
+    end
+
+    if self.refs.logoWrap then
+        TweenService:Create(
+            self.refs.logoWrap,
+            TweenInfo.new(DURATION, EASE, DIR),
+            { Position = minimized and UDim2.fromOffset(18, 11) or UDim2.fromOffset(16, 11) }
+        ):Play()
+    end
+
+    if self.refs.minBtn and self.refs.minImg then
+        self.refs.minImg:Destroy()
+        local newIcon
+        if ENV.IconLoader and ENV.IconLoader.Find then
+            local names = minimized and UI.IconName.maximize or UI.IconName.minimize
+            for _, n in ipairs(names) do
+                local ok, id = pcall(function() return ENV.IconLoader.Find(n) end)
+                if ok and type(id) == "string" and id ~= "" then
+                    newIcon = Instance.new("ImageLabel")
+                    newIcon.Name = "MinIcon"
+                    newIcon.Size = UDim2.fromOffset(16, 16)
+                    newIcon.BackgroundTransparency = 1
+                    newIcon.Image = id
+                    newIcon.ImageColor3 = minimized and t.accent or t.textDim
+                    newIcon.ScaleType = Enum.ScaleType.Fit
+                    newIcon.Position = UDim2.new(0.5, -8, 0.5, -8)
+                    newIcon.ZIndex = 5
+                    newIcon.Parent = self.refs.minBtn
+                    break
+                end
+            end
+        end
+        if newIcon then
+            newIcon.ImageTransparency = 1
+            TweenService:Create(
+                newIcon,
+                TweenInfo.new(DURATION * 0.7, Enum.EasingStyle.Quad, DIR),
+                { ImageTransparency = 0 }
+            ):Play()
+        end
+        self.refs.minImg = newIcon
+    end
+
+    local constraint = main:FindFirstChildOfClass("UISizeConstraint")
+    if constraint then
+        if minimized then
+            constraint.MinSize = Vector2.new(CONFIG.minWidth, CONFIG.pillHeight)
+            constraint.MaxSize = Vector2.new(CONFIG.maxWidth, CONFIG.pillHeight)
+        else
+            constraint.MinSize = Vector2.new(300, 340)
+            constraint.MaxSize = Vector2.new(UI.Dim.width, UI.Dim.height)
+        end
+    end
+
+    if minimized then
+        self.refs._restorePos    = main.Position
+        self.refs._restoreSize   = main.Size
+        self.refs._restoreAnchor = main.AnchorPoint
+
+        local targetPos
+        if self.refs._lastMinimizedPos then
+            targetPos = self.refs._lastMinimizedPos
+        else
+            local vp = getViewport()
+            targetPos = UDim2.fromOffset(
+                vp.X - CONFIG.pillWidth - CONFIG.pillOffsetX,
+                CONFIG.pillOffsetY
+            )
+        end
+
+        TweenService:Create(main, TweenInfo.new(DURATION, EASE, DIR), {
+            AnchorPoint = CONFIG.pillAnchor,
+            Position    = targetPos,
+            Size        = UDim2.fromOffset(CONFIG.pillWidth, CONFIG.pillHeight),
+        }):Play()
+    else
+        local restorePos  = self.refs._restorePos  or CONFIG.restorePos
+        local restoreSize = self.refs._restoreSize or CONFIG.restoreSize
+
+        TweenService:Create(main, TweenInfo.new(DURATION, EASE, DIR), {
+            AnchorPoint = CONFIG.restoreAnchor,
+            Position    = restorePos,
+            Size        = restoreSize,
+        }):Play()
+    end
+end
+
+Events:Emit("MinimizedUIReady", true)
+
+return {
+    version = "1.0.0",
+    config  = CONFIG,
+}
