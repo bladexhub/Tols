@@ -20,13 +20,11 @@ return {
     textDim = Color3.fromRGB(205, 205, 205),
     muted = Color3.fromRGB(175, 176, 182),
 
-    -- Acento: blanco puro (para enviar/copiar/guardar)
     accent = Color3.fromRGB(255, 255, 255),
     accentHover = Color3.fromRGB(224, 224, 224),
-    accentSoft = Color3.fromRGB(50, 70, 110),      -- ⬅ azul oscuro para el logo
+    accentSoft = Color3.fromRGB(64, 65, 70),
 
-    -- Estados activos: azul suave para que destaquen
-    selected = Color3.fromRGB(110, 170, 245),      -- ⬅ azul, antes gris
+    selected = Color3.fromRGB(210, 210, 214),
     success = Color3.fromRGB(80, 210, 140),
     warning = Color3.fromRGB(250, 190, 80),
     error = Color3.fromRGB(245, 95, 105),
