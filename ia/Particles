@@ -72,8 +72,9 @@ function Particles:_ensureDots(target)
     target = math.clamp(math.floor(target or self.count or 20), MIN_COUNT, MAX_COUNT)
 
     while #self.dots < target do
+        local baseSize = math.random(self.size - 1, self.size + 2)
         local dot = new("Frame", {
-            Size                   = UDim2.fromOffset(self.size, self.size),
+            Size                   = UDim2.fromOffset(baseSize, baseSize),
             BackgroundColor3       = self.color,
             BackgroundTransparency = dotTransparency(self.intensity),
             BorderSizePixel        = 0,
@@ -88,6 +89,10 @@ function Particles:_ensureDots(target)
             x = x, y = y,
             vx = (math.random() - 0.5) * self.speed * 3,
             vy = (math.random() - 0.5) * self.speed * 3,
+            baseSize = baseSize,
+            pulseSpeed = math.random(5, 15) / 10,
+            pulseOffset = math.random() * math.pi * 2,
+            baseTransparency = dotTransparency(self.intensity)
         }
     end
 
@@ -160,6 +165,11 @@ function Particles:update()
         if d.y < 0  then d.y = 0  d.vy = -d.vy end
         if d.y > h  then d.y = h  d.vy = -d.vy end
         d.frame.Position = UDim2.fromOffset(d.x, d.y)
+        
+        local pulse = math.sin(now * d.pulseSpeed + d.pulseOffset)
+        local currentSize = d.baseSize + pulse * 1.5
+        d.frame.Size = UDim2.fromOffset(currentSize, currentSize)
+        d.frame.BackgroundTransparency = math.clamp(d.baseTransparency + pulse * 0.1, 0, 1)
     end
 
     local maxDist  = 160
@@ -177,13 +187,13 @@ function Particles:update()
                 if li > #self.lines then break end
                 local line  = self.lines[li]
                 local dist  = math.sqrt(d2)
-                local angle = math.atan2(dy, dx) -- CORREGIDO: atan2 en lugar de atan
+                local angle = math.atan2(dy, dx)
                 local midX  = (a.x + b.x) / 2
                 local midY  = (a.y + b.y) / 2
                 line.Size     = UDim2.fromOffset(dist, 1)
                 line.Position = UDim2.fromOffset(midX - dist / 2, midY)
                 line.Rotation = math.deg(angle)
-                line.BackgroundTransparency = 0.80 + (dist / maxDist) * 0.15
+                line.BackgroundTransparency = math.clamp(0.80 + (dist / maxDist) * 0.15, 0, 1)
                 line.Visible  = true
             end
         end
@@ -213,10 +223,12 @@ function Particles:ApplySettings()
     for _, d in ipairs(self.dots) do
         d.vx = (math.random() - 0.5) * self.speed * 3
         d.vy = (math.random() - 0.5) * self.speed * 3
-        d.frame.Size = UDim2.fromOffset(self.size, self.size)
-        d.frame.BackgroundTransparency = dotTransparency(self.intensity)
+        d.baseSize = math.random(self.size - 1, self.size + 2)
+        d.baseTransparency = dotTransparency(self.intensity)
+        d.frame.BackgroundColor3 = self.color
     end
     for _, line in ipairs(self.lines) do
+        line.BackgroundColor3 = self.color
         line.BackgroundTransparency = lineTransparency(self.intensity)
     end
 
