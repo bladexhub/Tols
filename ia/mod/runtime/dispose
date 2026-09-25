@@ -1,0 +1,68 @@
+return (function()
+
+
+return function(env)
+	local M = { entries = {}, draining = false }
+
+	
+	
+	function M.add(fn, label)
+		if type(fn) ~= "function" then return function() end end
+		local entry = { fn = fn, label = label or "anonymous", alive = true }
+		M.entries[#M.entries + 1] = entry
+		return function()
+			if not entry.alive then return end
+			entry.alive = false
+			pcall(entry.fn)
+		end
+	end
+
+	
+	function M.connection(connection, label)
+		if type(connection) ~= "table" and type(connection) ~= "userdata" then
+			return function() end
+		end
+		return M.add(function()
+			pcall(function() connection:Disconnect() end)
+		end, label or "connection")
+	end
+
+	
+	function M.tween(tween, label)
+		if not tween then return function() end end
+		return M.add(function()
+			pcall(function() tween:Cancel() end)
+		end, label or "tween")
+	end
+
+	function M.count()
+		local alive = 0
+		for _, entry in ipairs(M.entries) do
+			if entry.alive then alive = alive + 1 end
+		end
+		return alive
+	end
+
+	
+	
+	function M.drain()
+		if M.draining then return 0 end
+		M.draining = true
+		local ran, failed = 0, {}
+		for index = #M.entries, 1, -1 do
+			local entry = M.entries[index]
+			if entry.alive then
+				entry.alive = false
+				local ok, err = pcall(entry.fn)
+				ran = ran + 1
+				if not ok then failed[#failed + 1] = entry.label .. ": " .. tostring(err) end
+			end
+		end
+		M.entries = {}
+		M.draining = false
+		return ran, failed
+	end
+
+	return M
+end
+end)()

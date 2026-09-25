@@ -1,0 +1,468 @@
+return (function()
+
+
+return function(env)
+	local util = env.require("runtime/util")
+	local caps = env.require("runtime/caps")
+	local clock = env.require("runtime/clock")
+	local log = env.require("runtime/log")
+	local ua = env.require("net/ua")
+	local signal = env.require("runtime/signal")
+
+	local HISTORY_LIMIT = 60
+
+	
+	
+	
+	local BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+	
+	
+	local RETRY_STATUS = {
+		[408] = true, [409] = true, [425] = true, [429] = true, [499] = true,
+	}
+
+	
+	
+	
+	
+	
+	
+	
+	
+	local DEADLINE_FLOOR = 10000
+
+	
+	
+	
+	
+	
+	
+	
+	local TRANSIENT_MARKERS = {
+		"rate_limit", "chatratelimited",
+		"upstream_provider_rate_limit", "server_is_overloaded",
+		"service_unavailable_error", "server_error", "overloaded_error",
+		"internal_server_error", "temporarily unavailable", "please try again",
+		"用户额度不足", "剩余额度",
+	}
+
+	local function transient(body)
+		if type(body) ~= "string" or body == "" then return false end
+		local lowered = body:lower()
+		for _, marker in ipairs(TRANSIENT_MARKERS) do
+			if lowered:find(marker, 1, true) then return true end
+		end
+		return false
+	end
+
+	
+	
+	
+	
+	local function errorPayload(body)
+		if type(body) ~= "string" or body == "" then return nil end
+		local function check(text)
+			local decoded = util.decode(text)
+			if type(decoded) ~= "table" then return nil end
+			if decoded.type == "error" then return decoded end
+			if decoded.error ~= nil then return decoded end
+			return nil
+		end
+		local direct = check(body)
+		if direct then return direct end
+		for line in body:gmatch("[^\r\n]+") do
+			local data = line:match("^data:%s*(.+)$")
+			if data and data ~= "[DONE]" then
+				local hit = check(data)
+				if hit then return hit end
+			end
+		end
+		return nil
+	end
+
+	local M = {
+		history = {},
+		changed = signal.new("http"),
+		count = 0,
+	}
+
+	function M.header(res, name)
+		local headers = res and res.headers
+		if type(headers) ~= "table" then return nil end
+		local wanted = tostring(name):lower()
+		for key, value in pairs(headers) do
+			if type(key) == "string" and key:lower() == wanted then
+				
+				if type(value) == "table" then return value[1] end
+				return value
+			end
+		end
+		return nil
+	end
+
+	local function record(entry)
+		M.count = M.count + 1
+		entry.id = M.count
+		M.history[#M.history + 1] = entry
+		if #M.history > HISTORY_LIMIT then table.remove(M.history, 1) end
+		M.changed:fire(entry)
+		return entry
+	end
+
+	local function identityHeaders(kind, attempt, timeout)
+		if kind == "none" then return {} end
+		if kind == "browser" then
+			return {
+				["User-Agent"] = BROWSER_UA,
+				["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+				["Accept-Language"] = "en-US,en;q=0.9",
+			}
+		end
+		if kind == "openrouter" then
+			return {
+				["User-Agent"] = "ProjectUAI/1.0.0",
+				["HTTP-Referer"] = "https://carldv.github.io/ProjectUAI/",
+				["X-Title"] = "Project UAI",
+				["X-OpenRouter-Title"] = "Project UAI",
+				["X-OpenRouter-Categories"] = "game,cli-agent",
+			}
+		end
+		if not ua.enabled() then return {} end
+		return ua.headers({ attempt = attempt, timeout = timeout })
+	end
+
+	
+	
+	local function buildHeaders(spec, attempt)
+		local url = tostring(spec.url or "")
+		local isOpenRouter = url:find("openrouter.ai", 1, true) ~= nil
+		local identity = isOpenRouter and "openrouter" or (spec.identity or "claude")
+
+		local headers = identityHeaders(identity, attempt, spec.timeout)
+		for key, value in pairs(spec.headers or {}) do
+			if value ~= nil then headers[key] = tostring(value) end
+		end
+		
+		
+		if spec.identityRequired and identity == "claude" then
+			local required = ua.headers({ attempt = attempt, timeout = spec.timeout, required = true })
+			local names = {}
+			for key in pairs(required) do names[key:lower()] = true end
+			for key in pairs(headers) do
+				if names[key:lower()] then headers[key] = nil end
+			end
+			for key, value in pairs(required) do headers[key] = value end
+		end
+
+		if isOpenRouter then
+			
+			if not headers["HTTP-Referer"] and not headers["http-referer"] then
+				headers["HTTP-Referer"] = "https://carldv.github.io/ProjectUAI/"
+			end
+			if not headers["X-Title"] and not headers["x-title"] then
+				headers["X-Title"] = "Project UAI"
+			end
+			if not headers["X-OpenRouter-Title"] and not headers["x-openrouter-title"] then
+				headers["X-OpenRouter-Title"] = "Project UAI"
+			end
+			if not headers["X-OpenRouter-Categories"] and not headers["x-openrouter-categories"] then
+				headers["X-OpenRouter-Categories"] = "game,cli-agent"
+			end
+			if not headers["User-Agent"] and not headers["user-agent"] then
+				headers["User-Agent"] = "ProjectUAI/1.0.0"
+			end
+			
+			headers["x-app"] = nil
+			headers["X-Stainless-Lang"] = nil
+			headers["X-Stainless-Package-Version"] = nil
+			headers["X-Stainless-OS"] = nil
+			headers["X-Stainless-Arch"] = nil
+			headers["X-Stainless-Runtime"] = nil
+			headers["X-Stainless-Runtime-Version"] = nil
+			headers["X-Stainless-Retry-Count"] = nil
+			headers["X-Stainless-Timeout"] = nil
+		end
+
+		if spec.body and not headers["Content-Type"] and not headers["content-type"] then
+			headers["Content-Type"] = "application/json"
+		end
+		return headers
+	end
+
+	
+	function M.headersFor(spec)
+		return buildHeaders(spec, spec.attempt or 1)
+	end
+
+	
+	
+	
+	
+	
+	
+	local function normalise(res, via)
+		local headers = res.Headers or res.ResponseHeaders or {}
+		if type(headers) ~= "table" then headers = {} end
+		local body = res.Body or res.ResponseData or ""
+		if body == "" and next(headers) == nil then
+			local said = util.trim(tostring(res.StatusMessage or ""))
+			return nil, said ~= "" and said or "the transport returned no response"
+		end
+		return {
+			status = tonumber(res.StatusCode or res.Status) or 0,
+			body = body,
+			headers = headers,
+			message = res.StatusMessage,
+			via = via,
+		}
+	end
+
+	local function send(url, method, headers, body, timeout)
+		local options = { Url = url, Method = method, Headers = headers }
+		if body and body ~= "" and method ~= "GET" and method ~= "HEAD" then
+			options.Body = body
+		end
+
+		if caps.fn.request then
+			
+			
+			
+			if timeout and timeout > 0 then options.Timeout = math.floor(timeout) end
+			local ok, res = pcall(caps.fn.request, options)
+			if not ok then return nil, tostring(res) end
+			if type(res) ~= "table" then return nil, "empty executor response" end
+			return normalise(res, "executor")
+		end
+
+		if caps.http == "none" then return nil, caps.reason("http") end
+		local ok, res = pcall(function() return env.hs:RequestAsync(options) end)
+		if not ok then return nil, tostring(res) end
+		if type(res) ~= "table" then return nil, "empty HttpService response" end
+		return normalise(res, "roblox")
+	end
+
+	
+	function M.request(spec)
+		local url = tostring(spec.url or "")
+		if url == "" then return nil, "no url" end
+		local method = (spec.method or "GET"):upper()
+		local attempt = spec.attempt or 1
+		local headers = buildHeaders(spec, attempt)
+		local started = clock.ms()
+
+		local res, err
+		if spec.relay then
+			res, err = env.require("net/relay").request(spec, headers, M.request)
+		else res, err = send(url, method, headers, spec.body, spec.timeout) end
+		local elapsed = clock.since(started)
+
+		
+		
+		
+		
+		local entry = {
+			at = started,
+			stamp = clock.stamp(),
+			method = method,
+			url = log.redact(url),
+			tag = spec.tag or "http",
+			ms = elapsed,
+			status = res and res.status or 0,
+			bytes = res and #tostring(res.body or "") or 0,
+			via = res and res.via or (caps.fn.request and "executor" or "roblox"),
+			identity = (url:find("openrouter.ai", 1, true) and "openrouter") or spec.identity or "claude",
+			uaSent = ((spec.identity ~= "none") or url:find("openrouter.ai", 1, true)) and caps.uaSupported or false,
+			error = err,
+			attempt = attempt,
+			
+			
+			
+			
+			
+			
+			response = res and util.ellipsis(res.body, 400) or nil,
+			server = res and M.header(res, "server") or nil,
+			trace = res and (M.header(res, "cf-ray") or M.header(res, "x-request-id")) or nil,
+			mitigated = res and M.header(res, "cf-mitigated") or nil,
+		}
+		if not spec.silent then record(entry) end
+
+		if not res then
+			
+			
+			
+			if not spec.silent then
+				log.warn("http", string.format("%s %s failed after %s", method, entry.url,
+					util.formatDuration(elapsed)), err)
+			end
+			return nil, err or "request failed", elapsed
+		end
+
+		res.ms = elapsed
+		res.ok = res.status >= 200 and res.status < 300
+		res.entry = entry
+		if spec.silent then
+			return res
+		end
+		if not res.ok then
+			log.warn("http", string.format("%s %s -> %d", method, entry.url, res.status),
+				util.ellipsis(res.body, 240))
+		else
+			log.debug("http", string.format("%s %s -> %d in %s", method, entry.url, res.status,
+				util.formatDuration(elapsed)))
+		end
+		return res
+	end
+
+	
+	
+	
+	local function retryDelay(res, attempt, opts)
+		if res then
+			local header = M.header(res, "retry-after")
+			local seconds = tonumber(header)
+			if seconds and seconds > 0 then return math.min(seconds, 60), "retry-after" end
+		end
+		return clock.backoff(attempt, opts), "backoff"
+	end
+
+	
+	
+	
+	
+	
+	
+	
+	
+	function M.shouldRetry(res, err, info)
+		if (res and res.terminal) or err == "aborted" then return false end
+		local elapsed = tonumber(info and info.elapsed) or 0
+		local status = res and res.status or 0
+		local body = tostring(res and res.body or "")
+
+		
+		
+		if info and type(info.skipStatus) == "table" and info.skipStatus[status] then
+			return false, "status " .. tostring(status) .. " (left to the caller)"
+		end
+
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		local told = res and tonumber(M.header(res, "retry-after"))
+		if elapsed >= DEADLINE_FLOOR and util.trim(body) == "" and not told then
+			return false, string.format("nothing returned after %s", util.formatDuration(elapsed))
+		end
+
+		
+		if err then return true, "transport error" end
+		if not res then return true, "no response" end
+
+		if RETRY_STATUS[status] then return true, "status " .. tostring(status) end
+		if status >= 500 and status <= 599 then return true, "status " .. tostring(status) end
+
+		
+		
+		
+		
+		
+		if status == 403 then
+			if util.trim(body) == "" then return true, "403 with no explanation" end
+			if transient(body) then return true, "403, upstream busy" end
+			return false
+		end
+
+		if res.ok then
+			local payload = errorPayload(body)
+			if payload then
+				local text = type(payload.error) == "table" and tostring(payload.error.message or "")
+					or tostring(payload.error or payload.message or "")
+				if transient(text) or transient(body) then return true, "error inside a 200" end
+			end
+			return false
+		end
+
+		if transient(body) then return true, "upstream busy" end
+		return false
+	end
+
+	
+	
+	
+	function M.send(spec)
+		local attempts = math.max(spec.attempts or 1, 1)
+		local lastRes, lastErr
+		for attempt = 1, attempts do
+			if spec.aborted and spec.aborted() then return nil, "aborted" end
+			local copy = util.copy(spec)
+			copy.attempt = attempt
+			local res, err, failedMs = M.request(copy)
+			lastRes, lastErr = res, err
+			
+			
+			local retry, why = M.shouldRetry(res, err, {
+				elapsed = res and res.ms or failedMs,
+				skipStatus = spec.skipStatus,
+			})
+			if not retry then
+				
+				
+				
+				
+				
+				if why and not res then
+					return nil, why .. " -- the transport gave up while the request was still " ..
+						"running. A smaller context budget or reply ceiling fits inside it."
+				end
+				return res, err
+			end
+			if attempt >= attempts then return res, err end
+			local wait, source = retryDelay(res, attempt, spec.backoff)
+			if spec.onRetry then
+				spec.onRetry({
+					attempt = attempt,
+					attempts = attempts,
+					wait = wait,
+					reason = why or source,
+					status = res and res.status or 0,
+					error = err,
+				})
+			end
+			
+			
+			local slept = 0
+			while slept < wait do
+				if spec.aborted and spec.aborted() then return nil, "aborted" end
+				local step = math.min(0.25, wait - slept)
+				clock.wait(step)
+				slept = slept + step
+			end
+		end
+		return lastRes, lastErr
+	end
+
+	function M.json(spec)
+		local res, err = M.send(spec)
+		if not res then return nil, err, nil end
+		local decoded, decodeErr = util.decode(res.body)
+		if decoded == nil then return nil, decodeErr or "invalid json", res end
+		return decoded, nil, res
+	end
+
+	function M.clearHistory()
+		M.history = {}
+		M.changed:fire(nil)
+	end
+
+	M.BROWSER_UA = BROWSER_UA
+
+	return M
+end
+end)()

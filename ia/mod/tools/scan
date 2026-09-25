@@ -1,0 +1,4 @@
+return (function()
+
+return function(env) return env.require("runtime/instance_scan") end
+end)()

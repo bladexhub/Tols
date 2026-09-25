@@ -1,0 +1,173 @@
+return (function()
+
+
+return function(env)
+	local util = env.require("runtime/util")
+	local signal = env.require("runtime/signal")
+
+	local M = {
+		session = { prompt = 0, completion = 0, total = 0, cost = 0, requests = 0, estimated = false },
+		turn = { prompt = 0, completion = 0, total = 0, cost = 0 },
+		changed = signal.new("usage"),
+		
+		
+		
+		
+		recorded = signal.new("usage:recorded"),
+	}
+
+	
+	
+	
+	
+	
+	
+	
+	local PRICES = {
+		["gpt-4o-mini"] = { 0.15, 0.60 },
+		["gpt-4o"] = { 2.50, 10.00 },
+		["gpt-4.1-mini"] = { 0.40, 1.60 },
+		["gpt-4.1"] = { 2.00, 8.00 },
+		["o4-mini"] = { 1.10, 4.40 },
+		["claude-haiku"] = { 1.00, 5.00 },
+		["claude-sonnet"] = { 3.00, 15.00 },
+		["claude-sonnet-5"] = { 2.00, 10.00 },
+		["claude-opus"] = { 15.00, 75.00 },
+		["claude-opus-4-6"] = { 5.00, 25.00 },
+		["claude-opus-4-7"] = { 5.00, 25.00 },
+		["claude-opus-4-8"] = { 5.00, 25.00 },
+		["claude-opus-5"] = { 5.00, 25.00 },
+		
+		["claude-fable-5"] = { 10.00, 50.00 },
+		["claude-mythos-5"] = { 10.00, 50.00 },
+		["deepseek-reasoner"] = { 0.55, 2.19 },
+		["deepseek-chat"] = { 0.27, 1.10 },
+		["llama-3.3-70b"] = { 0.59, 0.79 },
+		["llama-3.1-8b"] = { 0.05, 0.08 },
+		["mistral-large"] = { 2.00, 6.00 },
+		["mistral-small"] = { 0.20, 0.60 },
+		["grok-4"] = { 3.00, 15.00 },
+		["grok-3-mini"] = { 0.30, 0.50 },
+		["qwen"] = { 0.40, 0.80 },
+		["gemini-2.5-flash"] = { 0.30, 2.50 },
+	}
+
+	function M.priceFor(model, record) local ok, pricing = pcall(env.require, "agent/pricing"); if ok and pricing and pricing.priceFor then local price = pricing.priceFor(model, record); if price then return price end end
+		local id = tostring(model or ""):lower()
+		local best, bestLength = nil, 0
+		for prefix, price in pairs(PRICES) do
+			if id:find(prefix, 1, true) and #prefix > bestLength then
+				best, bestLength = price, #prefix
+			end
+		end
+		return best
+	end
+
+	
+	
+	
+	function M.estimateText(text)
+		if type(text) ~= "string" then return 0 end
+		return math.ceil(#text / 4)
+	end
+
+	function M.estimateMessages(messages)
+		local total = 0
+		for _, message in ipairs(messages or {}) do
+			
+			total = total + 4 + M.estimateText(message.content)
+			local reasoning = message.reasoning_content or message.reasoning
+			if reasoning then total = total + M.estimateText(reasoning) end
+			
+			
+			for _, call in ipairs(message.toolCalls or message.tool_calls or {}) do
+				local fn = call["function"] or {}
+				total = total + 8 + M.estimateText(fn.name) + M.estimateText(fn.arguments)
+			end
+		end
+		return total
+	end
+
+	function M.startTurn()
+		M.turn = { prompt = 0, completion = 0, total = 0, cost = 0 }
+	end
+
+	
+	
+	function M.record(usage, model, fallback, record)
+		local prompt, completion, estimated
+		if type(usage) == "table" and (usage.prompt_tokens or usage.completion_tokens) then
+			prompt = tonumber(usage.prompt_tokens) or 0
+			completion = tonumber(usage.completion_tokens) or 0
+			estimated = false
+		else
+			prompt = (fallback and fallback.prompt) or 0
+			completion = (fallback and fallback.completion) or 0
+			estimated = true
+		end
+
+		local price = M.priceFor(model, record)
+		local cost = 0
+		if price then
+			cost = (prompt / 1000000) * price[1] + (completion / 1000000) * price[2]
+		end
+
+		if not (fallback and fallback.background) then
+			M.turn.prompt = M.turn.prompt + prompt
+			M.turn.completion = M.turn.completion + completion
+			M.turn.total = M.turn.prompt + M.turn.completion
+			M.turn.cost = M.turn.cost + cost
+		end
+
+		M.session.prompt = M.session.prompt + prompt
+		M.session.completion = M.session.completion + completion
+		M.session.total = M.session.prompt + M.session.completion
+		M.session.cost = M.session.cost + cost
+		M.session.requests = M.session.requests + 1
+		if estimated then M.session.estimated = true end
+
+		local cached = util.get(usage or {}, "prompt_tokens_details.cached_tokens", 0)
+		local reasoning = util.get(usage or {}, "completion_tokens_details.reasoning_tokens", 0)
+		M.session.cached = (M.session.cached or 0) + (tonumber(cached) or 0)
+		M.session.reasoning = (M.session.reasoning or 0) + (tonumber(reasoning) or 0)
+
+		local delta = {
+			model = model,
+			prompt = prompt,
+			completion = completion,
+			cost = cost,
+			estimated = estimated,
+			cached = tonumber(cached) or 0,
+			reasoning = tonumber(reasoning) or 0,
+		}
+		M.recorded:fire(delta)
+		M.changed:fire(M.session, M.turn)
+		return { prompt = prompt, completion = completion, cost = cost, estimated = estimated }
+	end
+
+	function M.reset()
+		M.session = { prompt = 0, completion = 0, total = 0, cost = 0, requests = 0, estimated = false }
+		M.turn = { prompt = 0, completion = 0, total = 0, cost = 0 }
+		M.changed:fire(M.session, M.turn)
+	end
+
+	function M.formatCost(value)
+		if value <= 0 then return "" end
+		if value < 0.01 then return string.format("$%.4f", value) end
+		return string.format("$%.3f", value)
+	end
+
+	function M.line()
+		local parts = {
+			util.formatNumber(M.session.total) .. " tokens",
+			util.formatNumber(M.session.prompt) .. " in",
+			util.formatNumber(M.session.completion) .. " out",
+		}
+		local cost = M.formatCost(M.session.cost)
+		if cost ~= "" then parts[#parts + 1] = cost .. (M.session.estimated and " est." or "") end
+		return table.concat(parts, "  ")
+	end
+
+	return M
+end
+end)()

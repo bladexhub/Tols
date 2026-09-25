@@ -1,0 +1,364 @@
+return (function()
+
+
+return function(env)
+	local util = env.require("runtime/util")
+	local caps = env.require("runtime/caps")
+	local config = env.require("runtime/config")
+	local clock = env.require("runtime/clock")
+	local log = env.require("runtime/log")
+
+	local SOURCE_URL = "https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"
+
+	
+	
+	
+	local LOAD_TIMEOUT = 45
+
+	local M = {
+		
+		
+		mode = nil,
+		
+		
+		loadTried = false,
+		loadError = nil,
+		
+		source = nil,
+		
+		iy = nil,
+		
+		
+		sandbox = nil,
+	}
+
+	local function genv()
+		if caps.fn.getgenv then
+			local ok, shared = pcall(caps.fn.getgenv)
+			if ok and type(shared) == "table" then return shared end
+		end
+		return _G
+	end
+
+	
+	
+	
+	
+	
+	local function ambient(name)
+		local shared = genv()
+		local value = rawget(shared, name)
+		if value ~= nil then return value end
+		
+		
+		return nil
+	end
+
+	M.ambient = ambient
+
+	
+	
+	function M.environment()
+		if M.sandbox then return M.sandbox end
+		local fn = M.iy and M.iy.execCmd or ambient("execCmd")
+		if type(fn) == "function" and getfenv then
+			local ok, scope = pcall(getfenv, fn)
+			if ok and type(scope) == "table" and rawget(scope, "execCmd") == fn then return scope end
+		end
+		return genv()
+	end
+
+	function M.value(name)
+		local value = rawget(M.environment(), name)
+		if value ~= nil then return value end
+		if M.iy and M.iy[name] ~= nil then return M.iy[name] end
+		return ambient(name)
+	end
+
+	function M.assign(name, value)
+		rawset(M.environment(), name, value)
+		if M.iy then M.iy[name] = value end
+	end
+
+	function M.getMode()
+		local stored = config.get("iy.mode", "hidden")
+		M.mode = (stored == "hidden" or stored == "visible") and stored or "off"
+		return M.mode
+	end
+
+	function M.execFn()
+		if M.iy then return M.iy.execCmd end
+		local fn = ambient("execCmd")
+		if type(fn) == "function" then return fn end
+		return nil
+	end
+
+	function M.cmdsTable()
+		local list = M.value("cmds")
+		if type(list) == "table" then return list end
+		return nil
+	end
+
+	
+	
+	function M.descriptions()
+		local list = M.value("CMDs")
+		if type(list) == "table" then return list end
+		return nil
+	end
+
+	function M.resolvePlayers(selector)
+		local fn = M.value("getPlayer")
+		if type(fn) ~= "function" then return nil, "this IY does not expose getPlayer" end
+		local ok, names = pcall(fn, selector, env.plr)
+		if not ok then return nil, tostring(names) end
+		if type(names) ~= "table" then return nil, "getPlayer returned no list" end
+		for _, name in ipairs(names) do
+			if type(name) ~= "string" then return nil, "getPlayer returned an invalid player name" end
+		end
+		return names
+	end
+
+	function M.isLoaded()
+		return type(M.execFn()) == "function"
+	end
+
+	
+	
+	
+	function M.exec(command)
+		if M.getMode() == "off" then return false, "Infinite Yield integration is off in Settings" end
+		local fn = M.execFn()
+		if not fn then return false, "Infinite Yield is not loaded" end
+		local speaker = env.plr
+		local ok, err = pcall(fn, command, speaker, false)
+		if not ok then return false, tostring(err) end
+		return true, nil
+	end
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	local guard = nil
+
+	local function stopGuard()
+		if guard then
+			pcall(function() guard:Disconnect() end)
+			guard = nil
+		end
+	end
+
+	env.require("runtime/dispose").add(stopGuard, "iy.guard")
+
+	function M.applyGui()
+		local gui = M.value("PARENT")
+		if not gui then return false, "IY's GUI reference was not captured" end
+		if typeof and typeof(gui) ~= "Instance" then return false, "IY's GUI reference is not an Instance" end
+		local hidden = (M.mode ~= "visible")
+		stopGuard()
+		local ok = pcall(function() gui.Enabled = not hidden end)
+		if not ok then return false, "could not set the GUI's Enabled flag" end
+		if hidden then
+			local okConn, conn = pcall(function()
+				return gui:GetPropertyChangedSignal("Enabled"):Connect(function()
+					if M.mode ~= "visible" and gui.Enabled then gui.Enabled = false end
+				end)
+			end)
+			if okConn then guard = conn end
+		end
+		return true, nil
+	end
+
+	
+	
+	
+	
+	
+	
+	
+	local function runInternal()
+		local compile = caps.fn.loadstring
+		if not compile then return nil, "this host cannot compile code (loadstring is unavailable)" end
+
+		local holder = {}
+		local sandbox = setmetatable(holder, { __index = genv() })
+		
+		
+		
+		if setfenv and caps.fn.readfile then
+			sandbox.loadfile = function(path)
+				local plugin, err = compile(caps.fn.readfile(path), tostring(path))
+				if not plugin then error(err, 0) end
+				setfenv(plugin, sandbox)
+				return plugin
+			end
+		end
+
+		
+		
+		
+		
+		local http = env.require("net/http")
+		local res, err = http.send({
+			url = SOURCE_URL,
+			method = "GET",
+			identity = "browser",
+			tag = "iy",
+			timeout = LOAD_TIMEOUT * 1000,
+			attempts = 2,
+		})
+		if not res then return nil, "could not fetch the source: " .. tostring(err) end
+		if res.status ~= 200 then
+			return nil, string.format("the download answered HTTP %d", res.status)
+		end
+		local src = tostring(res.body or "")
+		if #src < 10000 then return nil, "the download was too small to be Infinite Yield" end
+
+		local fn, compileErr = compile(src, "infiniteyield")
+		if not fn then return nil, "compile error: " .. tostring(compileErr) end
+
+		
+		
+		
+		
+		
+		local captured = setfenv and pcall(setfenv, fn, sandbox)
+
+		local ok, runErr = pcall(fn)
+		if not ok then return nil, "the source raised: " .. tostring(runErr) end
+
+		
+		
+		clock.wait(0.5)
+		local exec = rawget(holder, "execCmd") or ambient("execCmd")
+		if type(exec) ~= "function" then
+			return nil, "the source ran but exposed no execCmd -- IY may have refused to load here"
+		end
+
+		M.sandbox = captured and sandbox or nil
+		
+		
+		
+		
+		
+		M.iy = {
+			execCmd = exec,
+			cmds = rawget(holder, "cmds") or ambient("cmds"),
+			prefix = rawget(holder, "prefix") or ambient("prefix"),
+			PARENT = rawget(holder, "PARENT") or ambient("PARENT"),
+			addPlugin = rawget(holder, "addPlugin") or ambient("addPlugin"),
+			deletePlugin = rawget(holder, "deletePlugin") or ambient("deletePlugin"),
+			PluginsTable = rawget(holder, "PluginsTable") or ambient("PluginsTable"),
+		}
+		return true, nil
+	end
+
+	
+	
+	
+	function M.ensure()
+		if M.getMode() == "off" then
+			return false, "Infinite Yield integration is off in Settings"
+		end
+		if M.loading then
+			local started = clock.ms()
+			while M.loading and clock.since(started) < 120000 do clock.wait(0.1) end
+			if M.loading then return false, "Infinite Yield is still loading" end
+			if M.getMode() == "off" then return false, "Infinite Yield integration is off in Settings" end
+		end
+		if M.isLoaded() then
+			if M.source == nil then M.source = "ambient" end
+			
+			
+			if M.source == "internal" then
+				local ok, err = M.applyGui()
+				if not ok then log.warn("iy", "could not apply the GUI mode", err) end
+			end
+			return true, nil
+		end
+		if M.loadTried then
+			return false, M.loadError or "an earlier load attempt failed"
+		end
+		M.loadTried = true
+		M.loading = true
+		local ran, ok, err = pcall(runInternal)
+		M.loading = false
+		if not ran then err, ok = ok, false end
+		if not ok then
+			M.loadError = err
+			log.warn("iy", "internal load failed", err)
+			return false, err
+		end
+
+		M.source = "internal"
+		M.getMode()
+		log.info("iy", "Infinite Yield loaded internally (" .. M.mode .. ")")
+		local guiOk, guiErr = M.applyGui()
+		if not guiOk then log.warn("iy", "GUI mode could not be applied", guiErr) end
+		if M.mode == "off" then return false, "Infinite Yield integration was switched off while loading" end
+		return true, nil
+	end
+
+	
+	
+	
+	
+	
+	
+	function M.setMode(mode)
+		if mode ~= "off" and mode ~= "hidden" and mode ~= "visible" then return false end
+		M.mode = mode
+		config.set("iy.mode", mode)
+		if M.source == "internal" and M.isLoaded() then
+			local ok, err = M.applyGui()
+			if not ok then log.warn("iy", "could not apply the GUI mode", err) end
+		end
+		return true
+	end
+
+	function M.status()
+		local rows = {}
+		rows[#rows + 1] = { "Setting", config.get("iy.mode", "hidden") }
+		if M.isLoaded() then
+			rows[#rows + 1] = { "Loaded", "yes, via " .. (M.source or "ambient") }
+			local cmds = M.cmdsTable()
+			if type(cmds) == "table" then
+				rows[#rows + 1] = { "Commands", tostring(#cmds) }
+			end
+			local prefix = M.value("prefix")
+			if prefix then rows[#rows + 1] = { "Prefix", tostring(prefix) } end
+			rows[#rows + 1] = { "Event editor", type(M.value("eventEditor")) == "table" and "available" or "not exposed by this IY" }
+			local binds = M.value("binds")
+			if type(binds) == "table" then rows[#rows + 1] = { "Keybinds", tostring(#binds) } end
+			local plugins = M.value("PluginsTable")
+			if type(plugins) == "table" then rows[#rows + 1] = { "Plugins", tostring(#plugins) } end
+			if M.source == "internal" then
+				rows[#rows + 1] = { "GUI", (M.mode == "visible") and "visible" or "hidden" }
+			else
+				rows[#rows + 1] = { "GUI", "the user's own -- not managed here" }
+			end
+		else
+			rows[#rows + 1] = { "Loaded", "no" }
+			if M.loadTried and M.loadError then
+				rows[#rows + 1] = { "Last load", M.loadError }
+			end
+		end
+		rows[#rows + 1] = { "Host can load it", caps.exec and "yes" or "no (no loadstring)" }
+		return rows
+	end
+
+	return M
+end
+end)()

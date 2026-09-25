@@ -1,0 +1,291 @@
+return (function()
+
+
+return function(env)
+	local util = env.require("runtime/util")
+
+	local M = {}
+
+	
+
+	
+	
+	local function outsideStrings(text, transform)
+		local parts, at = {}, 1
+		while at <= #text do
+			local quote = text:find('"', at, true)
+			if not quote then parts[#parts + 1] = transform(text:sub(at)); break end
+			parts[#parts + 1] = transform(text:sub(at, quote - 1))
+			local finish = quote + 1
+			while finish <= #text do
+				local char = text:sub(finish, finish)
+				if char == "\\" then finish = finish + 2
+				elseif char == '"' then finish = finish + 1; break
+				else finish = finish + 1 end
+			end
+			parts[#parts + 1] = text:sub(quote, finish - 1)
+			at = finish
+		end
+		return table.concat(parts)
+	end
+
+	
+	
+	
+	local function scanBalance(text)
+		local stack, inString, escaped = {}, false, false
+		for index = 1, #text do
+			local char = text:sub(index, index)
+			if inString then
+				if escaped then
+					escaped = false
+				elseif char == "\\" then
+					escaped = true
+				elseif char == '"' then
+					inString = false
+				end
+			else
+				if char == '"' then
+					inString = true
+				elseif char == "{" or char == "[" then
+					stack[#stack + 1] = char
+				elseif char == "}" or char == "]" then
+					local opener = table.remove(stack)
+					if opener ~= (char == "}" and "{" or "[") then return nil, false end
+					if #stack == 0 then return "", false, index end
+				end
+			end
+		end
+		local closers = {}
+		for index = #stack, 1, -1 do
+			closers[#closers + 1] = (stack[index] == "{") and "}" or "]"
+		end
+		return table.concat(closers), inString
+	end
+
+	function M.repairJson(raw, opts)
+		local text = util.trim(raw)
+		if text == "" then return {}, "empty arguments treated as {}" end
+
+		
+		text = text:gsub("^```%a*%s*", ""):gsub("```%s*$", "")
+		text = util.trim(text)
+
+		local direct = util.decode(text)
+		if type(direct) == "table" then return direct, nil end
+
+		
+		
+		local first = text:find("[%{%[]")
+		if first then
+			local candidate = text:sub(first)
+			local _, _, last = scanBalance(candidate)
+			if last then
+				local slice = candidate:sub(1, last)
+				local attempt = util.decode(slice)
+				if type(attempt) == "table" then return attempt, "stripped text around the JSON object" end
+				text = slice
+			else
+				text = candidate
+			end
+		end
+
+		local noTrailing = outsideStrings(text, function(part) return (part:gsub(",%s*([%}%]])", "%1")) end)
+		local attempt = util.decode(noTrailing)
+		if type(attempt) == "table" then return attempt, "removed a trailing comma" end
+		text = noTrailing
+
+		
+		local pythonic = outsideStrings(text, function(part)
+			return (part:gsub("%f[%w_]None%f[^%w_]", "null")
+				:gsub("%f[%w_]True%f[^%w_]", "true")
+				:gsub("%f[%w_]False%f[^%w_]", "false"))
+		end)
+		if pythonic ~= text then
+			attempt = util.decode(pythonic)
+			if type(attempt) == "table" then return attempt, "converted Python literals" end
+			text = pythonic
+		end
+
+		local closers, openString = scanBalance(text)
+		if openString then return nil, "arguments ended inside a string; send the complete JSON object" end
+		if closers == nil then return nil, "arguments contain mismatched JSON brackets" end
+		if closers ~= "" then
+			if opts and opts.allowTruncated == false then
+				return nil, "arguments were cut off; send complete JSON with smaller writes or edit batches"
+			end
+			local patched = text
+			
+			
+			local candidates = {
+				patched .. closers,
+				(patched:gsub(",%s*\"[^\"]*\"%s*:%s*$", "") .. closers),
+				(patched:gsub(",[^,]*$", "") .. closers),
+			}
+			for _, candidate in ipairs(candidates) do
+				local repaired = util.decode(candidate)
+				if type(repaired) == "table" then
+					return repaired, "completed a truncated JSON object"
+				end
+			end
+		end
+
+		return nil, "arguments were not valid JSON"
+	end
+
+	
+
+	local function typeOf(value)
+		if type(value) == "table" then
+			return util.isArray(value) and "array" or "object"
+		end
+		return type(value)
+	end
+
+	
+	
+	
+	local function coerce(value, wanted)
+		local actual = typeOf(value)
+		if wanted == nil or wanted == actual then return value, false end
+		if wanted == "number" or wanted == "integer" then
+			local number = tonumber(value)
+			if number == nil then return value, false end
+			return number, true
+		end
+		if wanted == "string" then
+			if actual == "number" or actual == "boolean" then return tostring(value), true end
+			return value, false
+		end
+		if wanted == "boolean" then
+			if value == "true" or value == 1 then return true, true end
+			if value == "false" or value == 0 then return false, true end
+			return value, false
+		end
+		if wanted == "array" and actual ~= "table" then
+			return { value }, true
+		end
+		if wanted == "object" and actual == "array" and #value == 0 then
+			return {}, true
+		end
+		return value, false
+	end
+
+	local function checkValue(schema, value, path, out)
+		if type(schema) ~= "table" then return value end
+		local wanted = schema.type
+		if type(wanted) == "table" then wanted = wanted[1] end
+
+		local coerced, didCoerce = coerce(value, wanted)
+		if didCoerce then out.coercions[#out.coercions + 1] = path end
+		value = coerced
+
+		local actual = typeOf(value)
+		
+		
+		
+		if wanted == "object" and actual == "array" and next(value) == nil then
+			actual = "object"
+		end
+		if wanted and actual ~= wanted then
+			if not (wanted == "integer" and actual == "number") then
+				out.errors[#out.errors + 1] = string.format("%s should be %s, got %s", path, wanted, actual)
+				return value
+			end
+		end
+
+		if schema.enum then
+			local allowed = false
+			for _, option in ipairs(schema.enum) do
+				if option == value then allowed = true end
+			end
+			if not allowed then
+				out.errors[#out.errors + 1] = string.format("%s must be one of: %s",
+					path, table.concat(util.map(schema.enum, tostring), ", "))
+			end
+		end
+
+		if wanted == "number" or wanted == "integer" then
+			if value ~= value or value == math.huge or value == -math.huge then
+				out.errors[#out.errors + 1] = path .. " must be a finite number"
+				return value
+			end
+			if wanted == "integer" and value ~= math.floor(value) then
+				out.errors[#out.errors + 1] = path .. " must be a whole number"
+			end
+			if schema.minimum and value < schema.minimum then
+				out.errors[#out.errors + 1] = string.format("%s must be at least %s", path, tostring(schema.minimum))
+			end
+			if schema.maximum and value > schema.maximum then
+				out.errors[#out.errors + 1] = string.format("%s must be at most %s", path, tostring(schema.maximum))
+			end
+		end
+
+		if wanted == "string" and schema.maxLength and #value > schema.maxLength then
+			out.errors[#out.errors + 1] = string.format("%s is longer than %d characters", path, schema.maxLength)
+		end
+		if wanted == "string" and schema.minLength and #value < schema.minLength then
+			out.errors[#out.errors + 1] = string.format("%s must contain at least %d characters", path, schema.minLength)
+		end
+
+		if actual == "object" and type(schema.properties) == "table" then
+			for _, key in ipairs(schema.required or {}) do
+				if value[key] == nil then
+					out.errors[#out.errors + 1] = string.format("%s is required", path .. "." .. key)
+				end
+			end
+			for key, child in pairs(schema.properties) do
+				if value[key] ~= nil then
+					value[key] = checkValue(child, value[key], path .. "." .. key, out)
+				end
+			end
+		end
+
+		if actual == "array" then
+			if schema.minItems and #value < schema.minItems then
+				out.errors[#out.errors + 1] = string.format("%s needs at least %d item(s)", path, schema.minItems)
+			end
+			if schema.maxItems and #value > schema.maxItems then
+				out.errors[#out.errors + 1] = string.format("%s allows at most %d item(s)", path, schema.maxItems)
+				return value
+			end
+			if type(schema.items) == "table" then
+				for index, item in ipairs(value) do
+					value[index] = checkValue(schema.items, item, string.format("%s[%d]", path, index), out)
+				end
+			end
+		end
+
+		return value
+	end
+
+	
+	
+	
+	function M.validate(schema, value)
+		local out = { errors = {}, coercions = {} }
+		local coerced = checkValue(schema or {}, value, "arguments", out)
+		return coerced, out.errors, out.coercions
+	end
+
+	
+	function M.describe(schema)
+		if type(schema) ~= "table" or type(schema.properties) ~= "table" then return "no parameters" end
+		
+		
+		if util.isEmptyObject(schema.properties) then return "no parameters" end
+		local required = {}
+		for _, key in ipairs(schema.required or {}) do required[key] = true end
+		local parts = {}
+		for _, key in ipairs(util.keys(schema.properties, true)) do
+			local field = schema.properties[key]
+			parts[#parts + 1] = string.format("%s%s: %s", key, required[key] and "" or "?",
+				(type(field) == "table" and field.type) or "any")
+		end
+		if #parts == 0 then return "no parameters" end
+		return table.concat(parts, ", ")
+	end
+
+	return M
+end
+end)()

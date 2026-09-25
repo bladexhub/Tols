@@ -1,0 +1,523 @@
+return (function()
+
+
+return function(env)
+	local M = {}
+
+	
+
+	function M.trim(text)
+		return (tostring(text or ""):match("^%s*(.-)%s*$"))
+	end
+
+	function M.startsWith(text, prefix)
+		return tostring(text):sub(1, #prefix) == prefix
+	end
+
+	function M.endsWith(text, suffix)
+		return suffix == "" or tostring(text):sub(-#suffix) == suffix
+	end
+
+	
+	
+	function M.escapePattern(text)
+		return (tostring(text):gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%1"))
+	end
+
+	function M.split(text, separator)
+		local out = {}
+		local pattern = "([^" .. M.escapePattern(separator) .. "]+)"
+		for piece in tostring(text):gmatch(pattern) do out[#out + 1] = piece end
+		return out
+	end
+
+	function M.lines(text)
+		local out = {}
+		for line in (tostring(text) .. "\n"):gmatch("(.-)\n") do out[#out + 1] = line end
+		if out[#out] == "" then table.remove(out) end
+		return out
+	end
+
+	
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	local REPLACEMENT = "\239\191\189"
+
+	
+	
+	
+	local function sequenceWidth(byte)
+		if byte < 0x80 then return 1 end
+		if byte >= 0xC2 and byte <= 0xDF then return 2 end
+		if byte >= 0xE0 and byte <= 0xEF then return 3 end
+		if byte >= 0xF0 and byte <= 0xF4 then return 4 end
+		return 0
+	end
+
+	
+	
+	local function secondRange(lead)
+		if lead == 0xE0 then return 0xA0, 0xBF end
+		if lead == 0xED then return 0x80, 0x9F end
+		if lead == 0xF0 then return 0x90, 0xBF end
+		if lead == 0xF4 then return 0x80, 0x8F end
+		return 0x80, 0xBF
+	end
+
+	local function widthAt(text, index, size)
+		local byte = text:byte(index)
+		if not byte then return 0 end
+		local width = sequenceWidth(byte)
+		if width == 0 then return 0 end
+		if width == 1 then return 1 end
+		if index + width - 1 > size then return 0 end
+		local low, high = secondRange(byte)
+		local second = text:byte(index + 1)
+		if not second or second < low or second > high then return 0 end
+		for offset = 2, width - 1 do
+			local continuation = text:byte(index + offset)
+			if not continuation or continuation < 0x80 or continuation > 0xBF then return 0 end
+		end
+		return width
+	end
+
+	function M.validUtf8(text)
+		text = tostring(text or "")
+		local size = #text
+		local index = 1
+		while index <= size do
+			local width = widthAt(text, index, size)
+			if width == 0 then return false, index end
+			index = index + width
+		end
+		return true
+	end
+
+	
+	
+	function M.sanitise(text)
+		text = tostring(text or "")
+		local size = #text
+		local index = 1
+		local out = nil
+		while index <= size do
+			local width = widthAt(text, index, size)
+			if width > 0 then
+				if out then out[#out + 1] = text:sub(index, index + width - 1) end
+				index = index + width
+			else
+				if not out then out = { text:sub(1, index - 1) } end
+				out[#out + 1] = REPLACEMENT
+				index = index + 1
+			end
+		end
+		if not out then return text, false end
+		return table.concat(out), true
+	end
+
+	
+	
+	
+	local function cutBefore(text, index)
+		if index >= #text then return #text end
+		if index < 1 then return 0 end
+		local floor = math.max(index - 3, 0)
+		while index > floor do
+			local byte = text:byte(index + 1)
+			if not byte or byte < 0x80 or byte >= 0xC0 then return index end
+			index = index - 1
+		end
+		return index
+	end
+
+	
+	
+	local function cutAfter(text, tail)
+		local size = #text
+		if tail >= size then return size end
+		if tail < 1 then return 0 end
+		local floor = math.max(tail - 3, 0)
+		while tail > floor do
+			local byte = text:byte(size - tail + 1)
+			if not byte or byte < 0x80 or byte >= 0xC0 then return tail end
+			tail = tail - 1
+		end
+		return tail
+	end
+
+	
+	
+	
+	
+	
+	
+	
+	
+	function M.truncate(text, limit, note)
+		text = tostring(text or "")
+		if #text <= limit then return text, false end
+		local head = math.floor(limit * 0.7)
+		local tail = limit - head - 40
+		if tail < 40 then
+			return text:sub(1, cutBefore(text, limit)) .. "\n... [truncated]", true
+		end
+		head = cutBefore(text, head)
+		tail = cutAfter(text, tail)
+		return string.format(
+			"%s\n... [%d characters omitted%s] ...\n%s",
+			text:sub(1, head), #text - head - tail, note and (", " .. note) or "", text:sub(-tail)
+		), true
+	end
+
+	function M.ellipsis(text, limit)
+		text = tostring(text or ""):gsub("%s+", " ")
+		if #text <= limit then return text end
+		return text:sub(1, cutBefore(text, math.max(limit - 3, 1))) .. "..."
+	end
+
+	function M.indent(text, prefix)
+		local out = {}
+		for _, line in ipairs(M.lines(text)) do out[#out + 1] = prefix .. line end
+		return table.concat(out, "\n")
+	end
+
+	function M.pluralise(count, word)
+		return tostring(count) .. " " .. word .. (count == 1 and "" or "s")
+	end
+
+	function M.urlEncode(text)
+		return (tostring(text):gsub("[^%w%-_%.~]", function(c)
+			return string.format("%%%02X", string.byte(c))
+		end))
+	end
+
+	function M.urlDecode(text)
+		
+		
+		
+		
+		return (M.sanitise(tostring(text):gsub("%%(%x%x)", function(hex)
+			return string.char(tonumber(hex, 16))
+		end)))
+	end
+
+	
+	
+	function M.utf8Char(code)
+		code = tonumber(code)
+		if not code or code < 0 or code > 0x10FFFF then return "" end
+		
+		
+		if code >= 0xD800 and code <= 0xDFFF then return "" end
+		if code < 0x80 then return string.char(code) end
+		if code < 0x800 then
+			return string.char(0xC0 + math.floor(code / 0x40), 0x80 + (code % 0x40))
+		end
+		if code < 0x10000 then
+			return string.char(
+				0xE0 + math.floor(code / 0x1000),
+				0x80 + (math.floor(code / 0x40) % 0x40),
+				0x80 + (code % 0x40))
+		end
+		return string.char(
+			0xF0 + math.floor(code / 0x40000),
+			0x80 + (math.floor(code / 0x1000) % 0x40),
+			0x80 + (math.floor(code / 0x40) % 0x40),
+			0x80 + (code % 0x40))
+	end
+
+	function M.htmlEntities(text)
+		return (tostring(text)
+			:gsub("&nbsp;", " ")
+			:gsub("&amp;", "&")
+			:gsub("&lt;", "<")
+			:gsub("&gt;", ">")
+			:gsub("&quot;", '"')
+			:gsub("&#x27;", "'")
+			:gsub("&#39;", "'")
+			
+			
+			
+			
+			
+			:gsub("&#x(%x+);", function(hex) return M.utf8Char(tonumber(hex, 16)) end)
+			:gsub("&#(%d+);", function(digits) return M.utf8Char(tonumber(digits)) end))
+	end
+
+	
+
+	function M.copy(source)
+		local out = {}
+		for key, value in pairs(source or {}) do out[key] = value end
+		return out
+	end
+
+	function M.deepCopy(source, depth)
+		depth = (depth or 0) + 1
+		if depth > 32 or type(source) ~= "table" then return source end
+		local out = {}
+		for key, value in pairs(source) do out[key] = M.deepCopy(value, depth) end
+		return out
+	end
+
+	
+	
+	function M.merge(base, override)
+		local out = M.deepCopy(base)
+		for key, value in pairs(override or {}) do
+			if type(value) == "table" and type(out[key]) == "table" and not M.isArray(value) then
+				out[key] = M.merge(out[key], value)
+			else
+				out[key] = M.deepCopy(value)
+			end
+		end
+		return out
+	end
+
+	function M.isArray(value)
+		if type(value) ~= "table" then return false end
+		local count = 0
+		for key in pairs(value) do
+			if type(key) ~= "number" then return false end
+			count = count + 1
+		end
+		return count == #value
+	end
+
+	function M.keys(source, sorted)
+		local out = {}
+		for key in pairs(source or {}) do out[#out + 1] = key end
+		if sorted then
+			table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+		end
+		return out
+	end
+
+	function M.count(source)
+		local n = 0
+		for _ in pairs(source or {}) do n = n + 1 end
+		return n
+	end
+
+	function M.map(list, fn)
+		local out = {}
+		for index, value in ipairs(list or {}) do out[index] = fn(value, index) end
+		return out
+	end
+
+	function M.filter(list, fn)
+		local out = {}
+		for index, value in ipairs(list or {}) do
+			if fn(value, index) then out[#out + 1] = value end
+		end
+		return out
+	end
+
+	function M.find(list, fn)
+		for index, value in ipairs(list or {}) do
+			if fn(value, index) then return value, index end
+		end
+		return nil
+	end
+
+	function M.slice(list, from, to)
+		local out = {}
+		for index = math.max(from or 1, 1), math.min(to or #list, #list) do
+			out[#out + 1] = list[index]
+		end
+		return out
+	end
+
+	function M.reverse(list)
+		local out = {}
+		for index = #list, 1, -1 do out[#out + 1] = list[index] end
+		return out
+	end
+
+	function M.concatKeys(source, separator)
+		local parts = {}
+		for _, key in ipairs(M.keys(source, true)) do
+			parts[#parts + 1] = tostring(key) .. "=" .. tostring(source[key])
+		end
+		return table.concat(parts, separator or ", ")
+	end
+
+	
+
+	function M.clamp(value, low, high)
+		if value < low then return low end
+		if value > high then return high end
+		return value
+	end
+
+	function M.round(value, places)
+		local factor = 10 ^ (places or 0)
+		return math.floor(value * factor + 0.5) / factor
+	end
+
+	function M.lerp(from, to, alpha)
+		return from + (to - from) * alpha
+	end
+
+	function M.formatNumber(value)
+		local text = string.format("%d", math.floor(value))
+		local sign, digits = text:match("^(%-?)(%d+)$")
+		local grouped = digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+		return sign .. grouped
+	end
+
+	
+	
+	
+	
+	function M.formatCompact(value)
+		local number = tonumber(value) or 0
+		local sign = ""
+		if number < 0 then
+			sign = "-"
+			number = -number
+		end
+		local function trim(text)
+			return (text:gsub("%.0$", ""))
+		end
+		if number >= 1000000000 then
+			return sign .. trim(string.format("%.1f", number / 1000000000)) .. "B"
+		end
+		if number >= 1000000 then
+			return sign .. trim(string.format("%.1f", number / 1000000)) .. "M"
+		end
+		if number >= 10000 then
+			return sign .. trim(string.format("%.1f", number / 1000)) .. "K"
+		end
+		return sign .. M.formatNumber(number)
+	end
+
+	function M.formatDuration(ms)
+		if ms < 1000 then return string.format("%dms", math.floor(ms)) end
+		if ms < 60000 then return string.format("%.1fs", ms / 1000) end
+		return string.format("%dm %ds", math.floor(ms / 60000), math.floor((ms % 60000) / 1000))
+	end
+
+	function M.uid(prefix)
+		M.__counter = (M.__counter or 0) + 1
+		return (prefix or "id") .. "_" .. tostring(M.__counter) .. "_" ..
+			string.format("%x", math.floor((tonumber(tostring(os.time())) or 0) % 65536))
+	end
+
+	
+
+	
+	
+	
+	
+	
+	
+	
+	local EMPTY_MARK = "__uai_empty_object"
+	local EMPTY_TOKEN = "uai0e4b1c9fEMPTYOBJECT"
+
+	function M.emptyObject()
+		return { [EMPTY_MARK] = true }
+	end
+
+	function M.isEmptyObject(value)
+		return type(value) == "table" and value[EMPTY_MARK] == true
+	end
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	local function prepare(value, depth)
+		local kind = type(value)
+		if kind == "string" then return (M.sanitise(value)) end
+		if kind == "number" then
+			
+			
+			if value ~= value then return 0 end
+			if value == math.huge or value == -math.huge then return 0 end
+			return value
+		end
+		if kind == "function" or kind == "userdata" or kind == "thread" then
+			
+			
+			
+			return "<" .. kind .. ">"
+		end
+		depth = (depth or 0) + 1
+		if depth > 48 or kind ~= "table" then return value end
+		if M.isEmptyObject(value) then return EMPTY_TOKEN end
+		local out = {}
+		for key, item in pairs(value) do
+			local keyKind = type(key)
+			if keyKind == "string" then
+				out[(M.sanitise(key))] = prepare(item, depth)
+			elseif keyKind == "number" then
+				out[key] = prepare(item, depth)
+			end
+		end
+		return out
+	end
+
+	function M.encode(value)
+		local body = env.hs:JSONEncode(prepare(value))
+		return (body:gsub('"' .. EMPTY_TOKEN .. '"', "{}"))
+	end
+
+	
+	
+	function M.decode(text)
+		if type(text) ~= "string" or text == "" then return nil, "empty body" end
+		local ok, result = pcall(function() return env.hs:JSONDecode(text) end)
+		if not ok then return nil, tostring(result) end
+		return result
+	end
+
+	
+	function M.get(source, path, fallback)
+		local node = source
+		for _, part in ipairs(M.split(path, ".")) do
+			if type(node) ~= "table" then return fallback end
+			node = node[part]
+		end
+		if node == nil then return fallback end
+		return node
+	end
+
+	function M.set(source, path, value)
+		local parts = M.split(path, ".")
+		local node = source
+		for index = 1, #parts - 1 do
+			local key = parts[index]
+			if type(node[key]) ~= "table" then node[key] = {} end
+			node = node[key]
+		end
+		node[parts[#parts]] = value
+		return source
+	end
+
+	return M
+end
+end)()

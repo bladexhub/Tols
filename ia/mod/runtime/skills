@@ -1,0 +1,270 @@
+return (function()
+
+
+return function(env)
+	local util = env.require("runtime/util")
+	local fsx = env.require("runtime/fsx")
+	local config = env.require("runtime/config")
+	local signal = env.require("runtime/signal")
+
+	local READ_CAP = 12000
+
+	local M = {
+		changed = signal.new("skills"),
+	}
+
+	local DIR = { scope = "skills" }
+
+	
+
+	
+	
+	
+	
+	
+	local function parseFrontmatter(text)
+		local source = tostring(text or ""):gsub("^\u{FEFF}", "")
+		local header = {}
+
+		
+		local afterOpen = source:match("^%s*%-%-%-%s*\r?\n(.*)$")
+		if not afterOpen then return header, source end
+
+		
+		local closeStart = afterOpen:find("\n%s*%-%-%-%s*\r?\n")
+		if not closeStart then return header, source end
+
+		local block = afterOpen:sub(1, closeStart - 1)
+		local closeEnd = afterOpen:find("\n", closeStart + 1) or #afterOpen
+		local body = afterOpen:sub(closeEnd + 1)
+
+		for line in block:gmatch("[^\r\n]+") do
+			local key, value = line:match("^%s*([%w%-_]+)%s*:%s*(.-)%s*$")
+			if key and value ~= "" then header[key:lower()] = value end
+		end
+		return header, body
+	end
+
+	local function safeName(raw)
+		local text = util.trim(tostring(raw or "")):gsub("%.md$", "")
+		if text == "" then return nil, "no name given" end
+		
+		
+		local clean, err = fsx.sanitise(text .. ".md")
+		if not clean then return nil, err end
+		return clean:gsub("%.md$", "")
+	end
+
+	
+
+	
+	
+	function M.list()
+		local out = {}
+		if not fsx.enabled then return out end
+		local entries = fsx.list("", DIR)
+		if type(entries) ~= "table" then return out end
+		for _, entry in ipairs(entries) do
+			if not entry.isDir and tostring(entry.name):sub(-3):lower() == ".md" then
+				local base = tostring(entry.name):sub(1, -4)
+				local content, readErr = fsx.read(entry.name, DIR)
+				if type(content) == "string" then
+					local header = parseFrontmatter(content)
+					out[#out + 1] = {
+						file = entry.name,
+						name = util.trim(header.name or base),
+						description = util.trim(header.description or ""),
+						enabled = M.isEnabled(entry.name),
+						size = #content,
+					}
+				else
+					out[#out + 1] = {
+						file = entry.name,
+						name = base,
+						description = "",
+						enabled = M.isEnabled(entry.name),
+						size = 0,
+						unreadable = tostring(readErr),
+					}
+				end
+			end
+		end
+		table.sort(out, function(a, b) return a.name:lower() < b.name:lower() end)
+		return out
+	end
+
+	function M.find(name)
+		local wanted = util.trim(tostring(name or "")):lower()
+		if wanted == "" then return nil end
+		local byFile = wanted:sub(-3) == ".md" and wanted or (wanted .. ".md")
+		local byName = util.trim(tostring(name)):lower()
+		local list = M.list()
+		for _, skill in ipairs(list) do
+			if skill.file:lower() == byFile then return skill end
+		end
+		for _, skill in ipairs(list) do
+			if skill.name:lower() == byName then return skill end
+		end
+		return nil
+	end
+
+	
+	
+	function M.readBody(name)
+		local skill = M.find(name)
+		if not skill then return nil, "no skill named '" .. tostring(name) .. "'" end
+		if not M.isEnabled(skill.file) then
+			return nil, "the '" .. skill.name .. "' skill is switched off in Settings"
+		end
+		local content, err = fsx.read(skill.file, DIR)
+		if not content then return nil, err end
+		local _, body = parseFrontmatter(content)
+		return body, skill
+	end
+
+	function M.read(name, limit)
+		local body, skill = M.readBody(name)
+		if body == nil then return nil, skill end
+		local text, truncated = util.truncate(body, tonumber(limit) or READ_CAP)
+		return string.format("%s (%d characters%s):\n%s",
+			skill.name, #body, truncated and ", trimmed" or "", text)
+	end
+
+	
+	
+	
+	
+	
+	
+
+	function M.isEnabled(file)
+		local stored = config.get("skills.disabled", {})
+		return type(stored) == "table" and stored[tostring(file)] ~= true
+	end
+
+	function M.setEnabled(file, enabled)
+		local list = config.get("skills.disabled", {})
+		if type(list) ~= "table" then list = {} end
+		list = util.copy(list)
+		if enabled == false then
+			list[tostring(file)] = true
+		else
+			list[tostring(file)] = nil
+		end
+		config.set("skills.disabled", list)
+		M.changed:fire(tostring(file), enabled ~= false)
+	end
+
+	
+
+	
+	
+	
+	function M.save(name, description, body)
+		local clean, err = safeName(name)
+		if not clean then return false, err end
+		local header = "name: " .. clean .. "\n"
+		local descriptionText = util.trim(tostring(description or ""))
+		if descriptionText ~= "" then
+			header = header .. "description: " .. util.ellipsis(descriptionText, 400) .. "\n"
+		end
+		local file = "---\n" .. header .. "---\n\n" .. tostring(body or "")
+		local ok, writeErr = fsx.write(clean .. ".md", file, DIR)
+		if not ok then return false, writeErr end
+		M.changed:fire(clean .. ".md", true)
+		return true, clean .. ".md"
+	end
+
+	function M.remove(name)
+		local skill = M.find(name)
+		if not skill then return false, "no skill named '" .. tostring(name) .. "'" end
+		local ok, err = fsx.delete(skill.file, DIR)
+		if not ok then return false, err end
+		
+		
+		M.setEnabled(skill.file, true)
+		M.changed:fire(skill.file, nil)
+		return true, skill.file
+	end
+
+	
+	
+	
+	
+	
+	
+	
+	function M.fromGitHub(ref, path)
+		local text = util.trim(tostring(ref or ""))
+		if text == "" then return false, "no repository given" end
+
+		local raw, name
+		if text:find("^https://") or text:find("^http://") then
+			raw = text:gsub("^http://", "https://")
+				:gsub("^https://github%.com/([^/]+)/([^/]+)/blob/(.+)$", "https://raw.githubusercontent.com/%1/%2/%3")
+			if not raw:find("^https://raw%.githubusercontent%.com/") then
+				return false, "give a github.com URL or owner/repo"
+			end
+			name = text:match("[^/]+$"):gsub("%.md$", "")
+		else
+			local owner, repo = text:match("^([%w%.%-]+)/([%w%.%-]+)$")
+			if not owner then
+				return false, "give the repository as owner/repo or a GitHub URL"
+			end
+			local wanted = util.trim(tostring(path or ""))
+			if wanted == "" then wanted = "SKILL.md" end
+			raw = string.format("https://raw.githubusercontent.com/%s/%s/main/%s",
+				owner, repo, wanted)
+			name = repo
+		end
+
+		local http = env.require("net/http")
+		local res, err = http.send({
+			url = raw,
+			method = "GET",
+			identity = "browser",
+			tag = "skills",
+			attempts = 2,
+		})
+		if not res then return false, "could not reach the repository: " .. tostring(err) end
+		if not res.ok then
+			return false, string.format(
+				"the repository answered HTTP %d -- the file may sit on a branch other than main, or at a path other than the one given",
+				res.status)
+		end
+		local content = tostring(res.body or "")
+		if util.trim(content) == "" then return false, "the file was empty" end
+
+		local header, body = parseFrontmatter(content)
+		local skillName = util.trim(header.name or name or "skill")
+		local description = header.description or ("Installed from " .. text)
+		
+		
+		local ok, saveErr = M.save(skillName, description, (body ~= "" and body or content))
+		if not ok then return false, saveErr end
+		return true, skillName
+	end
+
+	
+
+	
+	function M.indexBlock()
+		if not fsx.enabled then return nil end
+		local list = M.list()
+		local lines = {}
+		for _, skill in ipairs(list) do
+			if skill.enabled then
+				local description = skill.description ~= "" and skill.description or "no description"
+				lines[#lines + 1] = "- " .. skill.name .. " [" .. skill.file .. "]: " .. util.ellipsis(description, 100)
+			end
+		end
+		if #lines == 0 then return nil end
+		return table.concat(lines, "\n")
+	end
+
+	M.READ_CAP = READ_CAP
+	M.DIR = DIR
+
+	return M
+end
+end)()
