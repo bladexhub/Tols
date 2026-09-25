@@ -987,25 +987,28 @@ local CLOSED = false
 -- show window
 local function showWindow()
     REOPEN_BTN.Visible = false
+    CON_SCR.Visible = false
     WIN.Visible = true
     WIN_SCALE.Scale = 0.9
 
     isOpen = true
-    lockScroll = true
 
-    if savedScroll and CON_SCR.Parent then
-        CON_SCR.CanvasPosition = savedScroll
+    local target = savedScroll
+    if target then lockScroll = true end
+    if target and CON_SCR.Parent then
+        CON_SCR.CanvasPosition = target
     end
 
     TW(WIN_SCALE, TI_POP, { Scale = 1 })
 
+    -- deja pasar 3 frames para que el layout se asiente, luego revela
     task.spawn(function()
-        task.wait(0.35)
-        if not isOpen then return end
-        if savedScroll and CON_SCR.Parent then
-            CON_SCR.CanvasPosition = savedScroll
+        for _ = 1, 3 do RunService.Heartbeat:Wait() end
+        if not isOpen then lockScroll = false; return end
+        if target and CON_SCR.Parent then
+            CON_SCR.CanvasPosition = target
         end
-        task.wait(0.1)
+        if CON_SCR.Parent then CON_SCR.Visible = true end
         lockScroll = false
         savedScroll = nil
     end)
@@ -1013,6 +1016,9 @@ end
 
 -- hide window
 local function hideWindow()
+    killScroll()
+    CON_SCR.Visible = false
+
     if CON_SCR.Parent then
         savedScroll = CON_SCR.CanvasPosition
     end
@@ -1058,6 +1064,8 @@ end
 
 -- close
 CLOSE_BTN.MouseButton1Click:Connect(function()
+    killScroll()
+    CON_SCR.Visible = false
     local t = TWc(WIN_SCALE, TI_FAST, { Scale = 0.85 })
     t.Completed:Connect(function()
         shutdown()
