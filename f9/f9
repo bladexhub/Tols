@@ -383,38 +383,56 @@ end
 local isOpen = true
 local savedScroll = nil
 local lockScroll = false
+local scrollConn = nil
+
+-- kill scroll
+local function killScroll()
+    if scrollConn then
+        scrollConn:Disconnect()
+        scrollConn = nil
+    end
+end
+
+-- max scroll
+local function maxScrollY()
+    return math.max(0, CON_SCR.AbsoluteCanvasSize.Y - CON_SCR.AbsoluteWindowSize.Y)
+end
 
 -- scroll func
-local function doScrollTo(pos)
+local function doScrollTo(targetY)
     if not CON_SCR.Parent then return end
-    local target = pos
-    local start = CON_SCR.CanvasPosition
-    if (target - start).Magnitude > 1 then
-        local t0 = os.clock()
-        local conn
-        conn = RunService.RenderStepped:Connect(function()
-            if lockScroll then
-                if conn then conn:Disconnect() end
-                return
-            end
-            local a = math.min((os.clock() - t0) / 0.18, 1)
-            local e = 1 - (1 - a) * (1 - a)
-            CON_SCR.CanvasPosition = start:Lerp(target, e)
-            if a >= 1 then
-                if conn then conn:Disconnect() end
-            end
-        end)
+    killScroll()
+
+    local startX = CON_SCR.CanvasPosition.X
+    local startY = CON_SCR.CanvasPosition.Y
+    if math.abs(targetY - startY) <= 1 then
+        CON_SCR.CanvasPosition = Vector2.new(startX, targetY)
+        return
     end
+
+    local t0 = os.clock()
+    scrollConn = RunService.RenderStepped:Connect(function()
+        if not CON_SCR.Parent or lockScroll then
+            killScroll(); return
+        end
+        local a = math.min((os.clock() - t0) / 0.18, 1)
+        local e = 1 - (1 - a) * (1 - a)
+        local ty = math.min(targetY, maxScrollY())
+        CON_SCR.CanvasPosition = Vector2.new(startX, startY + (ty - startY) * e)
+        if a >= 1 then
+            CON_SCR.CanvasPosition = Vector2.new(startX, maxScrollY())
+            killScroll()
+        end
+    end)
 end
 
 -- scroll bottom
 local function scrollToBottom()
-    if not isOpen then return end
-    if lockScroll then return end
+    if not isOpen or lockScroll then return end
     task.defer(function()
-        if isOpen and not lockScroll and CON_SCR.Parent then
-            doScrollTo(Vector2.new(0, CON_SCR.AbsoluteCanvasSize.Y))
-        end
+        if not isOpen or lockScroll or not CON_SCR.Parent then return end
+        RunService.Heartbeat:Wait()
+        doScrollTo(maxScrollY())
     end)
 end
 
@@ -1021,6 +1039,8 @@ local function shutdown()
     dragStart, winStart = nil, nil
     resizeStart, resizeWinPos, resizeWinSize = nil, nil, nil
     savedScroll = nil
+
+    pcall(function() killScroll() end)
 
     for _, conn in ipairs(connections) do
         pcall(function() conn:Disconnect() end)
