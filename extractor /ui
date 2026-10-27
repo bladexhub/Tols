@@ -85,7 +85,7 @@ local function applyIcon(holder, name, color, keepColor)
     return true
 end
 
--- mk icono
+-- icono
 local function mkIcon(name, size, color, parent, keepColor)
     local holder = Instance.new("Frame")
     holder.BackgroundTransparency = 1
@@ -112,7 +112,7 @@ task.spawn(function()
     iconSlots = {}
 end)
 
--- UI helpers
+-- UI
 local function mk(cls, props, parent)
     local o = Instance.new(cls)
     for k, v in pairs(props) do o[k] = v end
@@ -134,7 +134,7 @@ local function vlist(p, sp)
     l.Padding = UDim.new(0, sp or 0); l.Parent = p
 end
 
--- tweens
+-- anim
 local TI_FAST = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local TI_POP  = TweenInfo.new(0.30, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
 local TI_SOFT = TweenInfo.new(0.20, Enum.EasingStyle.Sine,  Enum.EasingDirection.Out)
@@ -178,7 +178,7 @@ corner(WIN, 16); stroke(WIN, C.WBRD, 1.5)
 local WIN_SCALE = Instance.new("UIScale", WIN)
 WIN_SCALE.Scale = 1
 
--- top bar
+-- barra
 local TB = mk("Frame", {
     Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.HDR2,
     BorderSizePixel = 0, ZIndex = 20, Active = true,
@@ -250,7 +250,7 @@ local scrollConn = nil
 local function killScroll() if scrollConn then scrollConn:Disconnect(); scrollConn = nil end end
 local function maxScrollY() return math.max(0, CON_SCR.AbsoluteCanvasSize.Y - CON_SCR.AbsoluteWindowSize.Y) end
 
--- scroll anim
+-- anim scroll
 local function doScrollTo(targetY)
     if not CON_SCR.Parent then return end
     killScroll()
@@ -330,7 +330,7 @@ corner(INPUT_BG, 6); local inputStroke = stroke(INPUT_BG, C.CON_BRD, 1)
 -- textbox
 local INPUT = mk("TextBox", {
     Size = UDim2.new(1, -16, 1, 0), Position = UDim2.new(0, 8, 0, 0),
-    BackgroundTransparency = 1, PlaceholderText = "Pega la URL o loadstring(...) aquí",
+    BackgroundTransparency = 1, PlaceholderText = "Pega el enlace (URL) aquí...",
     PlaceholderColor3 = C.TXTD, Text = "", TextColor3 = C.CON_TXT, Font = Enum.Font.Code, TextSize = 12,
     TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 16,
 }, INPUT_BG)
@@ -344,7 +344,7 @@ INPUT.FocusLost:Connect(function(enter)
     if enter then local c = INPUT.Text; INPUT.Text = ""; exec(c) end
 end)
 
--- boton run
+-- botón
 local RUN_BTN = mk("TextButton", {
     Text = "", BackgroundColor3 = Color3.fromRGB(20,80,34), BorderSizePixel = 0, AutoButtonColor = false,
     Size = UDim2.new(0, 70, 1, 0), Position = UDim2.new(1, -70, 0, 0), ZIndex = 15,
@@ -374,9 +374,10 @@ exec = function(input)
     if #history > 60 then table.remove(history) end
     histIdx = 0
 
-    local url = string.match(input, "(https?://[^\"']+)")
+    -- Solo URLs
+    local url = string.match(input, "^(https?://.+)$")
     if not url then
-        addLine("Error: Enlace no válido.", C.CON_ERR, "err", ICO.error)
+        addLine("Error: Solo se aceptan enlaces (URLs).", C.CON_ERR, "err", ICO.error)
         return
     end
 
@@ -491,7 +492,7 @@ local function pointInGui(obj, px, py)
     return px >= ap.X and px <= ap.X + as.X and py >= ap.Y and py <= ap.Y + as.Y
 end
 
--- check UI
+-- check
 local function isOverUI(px, py)
     if pointInGui(CLOSE_BTN, px, py) then return true end
     if pointInGui(MINI_BTN, px, py) then return true end
@@ -533,4 +534,185 @@ connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
 end)
 
 connections[#connections + 1] = UIS.InputEnded:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputTyp
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+        if dragging then stopDrag() end
+        if resizing then
+            resizing = false; activeHandle = nil; resizeStart = nil; resizeWinPos = nil; resizeWinSize = nil
+            TW(WIN_SCALE, TI_SOFT, { Scale = 1 })
+        end
+    end
+end)
+
+-- resize
+local RESIZE_EDGE = SET.RESIZE_EDGE
+local cornerHandles = {
+    {name = "TL", px = 0, py = 0, dx = -1, dy = -1},
+    {name = "TR", px = 1, py = 0, dx =  1, dy = -1},
+    {name = "BL", px = 0, py = 1, dx = -1, dy =  1},
+    {name = "BR", px = 1, py = 1, dx =  1, dy =  1},
+}
+
+for _, h in ipairs(cornerHandles) do
+    local hf = mk("Frame", {
+        Name = "Rsz_" .. h.name,
+        Size = UDim2.new(0, RESIZE_EDGE, 0, RESIZE_EDGE),
+        Position = UDim2.new(h.px, h.dx == 1 and -RESIZE_EDGE or 0,
+                             h.py, h.dy == 1 and -RESIZE_EDGE or 0),
+        BackgroundTransparency = 1,
+        ZIndex = 10,
+        Active = true,
+    }, WIN)
+    
+    hf.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            local px, py = inp.Position.X, inp.Position.Y
+            if pointInGui(CLOSE_BTN, px, py) then return end
+            if pointInGui(MINI_BTN, px, py) then return end
+            if pointInGui(TB, px, py) then return end
+
+            activeHandle = h
+            resizing = true
+            resizeStart = Vector2.new(inp.Position.X, inp.Position.Y)
+            resizeWinPos = WIN.Position
+            resizeWinSize = WIN.Size
+            TW(WIN_SCALE, TI_FAST, { Scale = 1.015 })
+        end
+    end)
+end
+
+local function updateResize(pos)
+    if not resizing or not activeHandle then return end
+    local d = pos - resizeStart
+    local vp = workspace.CurrentCamera.ViewportSize
+    local W = resizeWinSize.X.Offset
+    local H = resizeWinSize.Y.Offset
+    local PX = resizeWinPos.X.Offset
+    local PY = resizeWinPos.Y.Offset
+    local nW, nH, nPX, nPY = W, H, PX, PY
+
+    if activeHandle.dx == 1 then
+        nW = math.min(math.max(SET.MIN_W, W + d.X), vp.X - PX)
+    elseif activeHandle.dx == -1 then
+        local dw = math.min(d.X, W - SET.MIN_W)
+        nW = W - dw
+        nPX = math.max(0, PX + dw)
+    end
+    if activeHandle.dy == 1 then
+        nH = math.min(math.max(SET.MIN_H, H + d.Y), vp.Y - PY)
+    elseif activeHandle.dy == -1 then
+        local dh = math.min(d.Y, H - SET.MIN_H)
+        nH = H - dh
+        nPY = math.max(0, PY + dh)
+    end
+    WIN.Size = UDim2.new(0, nW, 0, nH)
+    WIN.Position = UDim2.new(0, nPX, 0, nPY)
+end
+
+connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
+    if not resizing or not activeHandle then return end
+    if inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch then
+        updateResize(Vector2.new(inp.Position.X, inp.Position.Y))
+    end
+end)
+
+-- anti-solape
+local startYPos = 60 
+local knownUIs = {"__DexRoot", "DarkDex", "F9Gui", "Orion", "Linoria", "Synapse", "ScriptWare"}
+for _, guiName in ipairs(knownUIs) do
+    if PGui:FindFirstChild(guiName) or CoreGui:FindFirstChild(guiName) then
+        startYPos = startYPos + 42 
+    end
+end
+
+local REOPEN_BTN = mk("TextButton", {
+    Name = "ReopenBtn", Text = "", BackgroundColor3 = C.F9BG, BackgroundTransparency = 0,
+    Size = UDim2.new(0, 110, 0, 30), Position = UDim2.new(0, 8, 0, startYPos),
+    Visible = false, BorderSizePixel = 0, AutoButtonColor = false, ZIndex = 200,
+}, GUI)
+corner(REOPEN_BTN, 10); stroke(REOPEN_BTN, C.BLUE, 1.5)
+
+-- icono
+local reopenIcon = mkIcon(ICO.minimized, 16, C.TXTW, REOPEN_BTN, true) 
+reopenIcon.Position = UDim2.new(0, 8, 0.5, -8)
+
+mk("TextLabel", {
+    Text = "EXTRACTOR",
+    TextColor3 = C.TXTW, Font = Enum.Font.GothamBold, TextSize = 11,
+    BackgroundTransparency = 1, Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 30, 0, 0),
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 201,
+}, REOPEN_BTN)
+
+local reopenScale = Instance.new("UIScale", REOPEN_BTN)
+local pulseTween = TweenService:Create(reopenScale, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Scale = 1.07 })
+pulseTween:Play()
+
+REOPEN_BTN.MouseEnter:Connect(function() if REOPEN_BTN.Parent then TW(REOPEN_BTN, TI_FAST, { BackgroundTransparency = 0.25 }) end end)
+REOPEN_BTN.MouseLeave:Connect(function() if REOPEN_BTN.Parent then TW(REOPEN_BTN, TI_SOFT, { BackgroundTransparency = 0 }) end end)
+
+-- cerrado
+local CLOSED = false
+
+-- mostrar
+local function showWindow()
+    REOPEN_BTN.Visible = false; CON_SCR.Visible = false; WIN.Visible = true; WIN_SCALE.Scale = 0.9; isOpen = true
+    local target = savedScroll
+    if target then lockScroll = true end
+    if target and CON_SCR.Parent then CON_SCR.CanvasPosition = target end
+    TW(WIN_SCALE, TI_POP, { Scale = 1 })
+    task.spawn(function()
+        for _ = 1, 3 do RunService.Heartbeat:Wait() end
+        if not isOpen then lockScroll = false; return end
+        if target and CON_SCR.Parent then CON_SCR.CanvasPosition = target end
+        if CON_SCR.Parent then CON_SCR.Visible = true end
+        lockScroll = false; savedScroll = nil
+    end)
+end
+
+-- ocultar
+local function hideWindow()
+    killScroll(); CON_SCR.Visible = false
+    if CON_SCR.Parent then savedScroll = CON_SCR.CanvasPosition end
+    isOpen = false
+    local t = TWc(WIN_SCALE, TI_FAST, { Scale = 0.9 })
+    t.Completed:Connect(function()
+        if WIN and WIN.Parent and not CLOSED then WIN.Visible = false; WIN_SCALE.Scale = 1; REOPEN_BTN.Visible = true end
+    end)
+end
+
+-- cerrar
+local function shutdown()
+    if CLOSED then return end
+    CLOSED = true
+    dragging = false; resizing = false; activeHandle = nil; dragStart, winStart = nil, nil; resizeStart, resizeWinPos, resizeWinSize = nil, nil, nil; savedScroll = nil
+    pcall(function() killScroll() end)
+    for _, conn in ipairs(connections) do pcall(function() conn:Disconnect() end) end
+    connections = {}
+    pcall(function() if loaderThread then task.cancel(loaderThread) end end)
+    pcall(function() if GUI and GUI.Parent then GUI:Destroy() end end)
+end
+
+CLOSE_BTN.MouseButton1Click:Connect(function()
+    killScroll(); CON_SCR.Visible = false
+    local t = TWc(WIN_SCALE, TI_FAST, { Scale = 0.85 })
+    t.Completed:Connect(function() shutdown() end)
+end)
+
+MINI_BTN.MouseButton1Click:Connect(function() if CLOSED then return end; hideWindow() end)
+REOPEN_BTN.MouseButton1Click:Connect(function() if CLOSED then return end; showWindow() end)
+
+-- atajo
+connections[#connections + 1] = UIS.InputBegan:Connect(function(inp, gp)
+    if gp then return end
+    if inp.KeyCode == Enum.KeyCode.RightShift then
+        if not CLOSED and WIN and WIN.Parent then
+            if WIN.Visible then hideWindow() else showWindow() end
+        end
+    end
+end)
+
+-- init
+addLine("Pega el enlace (URL) arriba y presiona Run.", C.CON_SYS, "info", ICO.chevron)
+
+return true
