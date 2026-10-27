@@ -1,0 +1,536 @@
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local LP = Players.LocalPlayer
+local PGui = LP:WaitForChild("PlayerGui", 10)
+
+-- URLs
+local URL_LOADER = "https://raw.githubusercontent.com/BladexDevX/loader/refs/heads/main/BladexIconLoader"
+local URL_THEME_DARK  = "https://raw.githubusercontent.com/bladexhub/Tols/refs/heads/main/f9/config%20settings"
+
+-- fetch
+local function fetch(url)
+    local ok, res = pcall(game.HttpGet, game, url)
+    if ok and type(res) == "string" and #res > 0 then return res end
+    return nil
+end
+local function fetchTable(url)
+    local code = fetch(url); if not code then return nil end
+    local fn = loadstring(code); if not fn then return nil end
+    local ok, res = pcall(fn)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+local function fetchFunc(url)
+    local code = fetch(url); if not code then return nil end
+    return loadstring(code)
+end
+
+-- loader
+local IconLoader = nil
+local loaderThread = task.spawn(function()
+    local fn = fetchFunc(URL_LOADER)
+    if not fn then return end
+    local ok, res = pcall(fn)
+    if ok and type(res) == "table" then IconLoader = res end
+end)
+
+-- tema
+local C = fetchTable(URL_THEME_DARK)
+local SET = { DEFAULT_W = 620, DEFAULT_H = 420, MIN_W = 360, MIN_H = 240, RESIZE_EDGE = 26 }
+
+-- iconos
+local ICO = {
+    chevron = "chevron-right", 
+    error = "circle-x", 
+    warn = "alert-triangle",
+    info = "info", 
+    check = "circle-check", 
+    ret = "corner-down-left",
+    logo = "bladex-hud-logo", 
+    minimized = "code",
+    play = "play", 
+    minus = "minus"
+}
+
+if not C then return end
+
+-- cache
+local iconCache = {}
+local function getIcon(name)
+    if not name or not IconLoader then return nil end
+    if iconCache[name] ~= nil then return iconCache[name] or nil end
+    local ok, id = pcall(IconLoader.Find, name)
+    if ok and id then iconCache[name] = id; return id end
+    ok, id = pcall(IconLoader.GetAny, {"lucide","solar","gravity","sfsymbols"}, name)
+    if ok and id then iconCache[name] = id; return id end
+    iconCache[name] = false
+    return nil
+end
+
+-- slots
+local iconSlots = {}
+local function applyIcon(holder, name, color, keepColor)
+    local id = getIcon(name); if not id then return false end
+    holder:ClearAllChildren()
+    local img = Instance.new("ImageLabel")
+    img.Image = id
+    img.ImageColor3 = keepColor and Color3.fromRGB(255,255,255) or (color or Color3.new(1,1,1))
+    img.BackgroundTransparency = 1
+    img.ScaleType = Enum.ScaleType.Fit
+    img.Size = UDim2.new(1, 0, 1, 0)
+    img.Parent = holder
+    return true
+end
+
+-- mk icono
+local function mkIcon(name, size, color, parent, keepColor)
+    local holder = Instance.new("Frame")
+    holder.BackgroundTransparency = 1
+    holder.Size = UDim2.new(0, size, 0, size)
+    holder.Parent = parent
+    if not applyIcon(holder, name, color, keepColor) then
+        iconSlots[#iconSlots + 1] = {holder = holder, name = name, color = color, keepColor = keepColor}
+    end
+    return holder
+end
+
+-- reintentar
+task.spawn(function()
+    for _ = 1, 40 do
+        if IconLoader then break end
+        task.wait(0.5)
+    end
+    if not IconLoader then return end
+    for _, slot in ipairs(iconSlots) do
+        if slot.holder and slot.holder.Parent then
+            applyIcon(slot.holder, slot.name, slot.color, slot.keepColor)
+        end
+    end
+    iconSlots = {}
+end)
+
+-- UI helpers
+local function mk(cls, props, parent)
+    local o = Instance.new(cls)
+    for k, v in pairs(props) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
+local function corner(p, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 6); c.Parent = p; return c end
+local function stroke(p, col, th) local s = Instance.new("UIStroke"); s.Color = col; s.Thickness = th or 1; s.Parent = p; return s end
+local function pad(p, t, b, l, r)
+    local u = Instance.new("UIPadding")
+    u.PaddingTop = UDim.new(0, t); u.PaddingBottom = UDim.new(0, b)
+    u.PaddingLeft = UDim.new(0, l); u.PaddingRight = UDim.new(0, r)
+    u.Parent = p
+end
+local function vlist(p, sp)
+    local l = Instance.new("UIListLayout")
+    l.FillDirection = Enum.FillDirection.Vertical
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Padding = UDim.new(0, sp or 0); l.Parent = p
+end
+
+-- tweens
+local TI_FAST = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_POP  = TweenInfo.new(0.30, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
+local TI_SOFT = TweenInfo.new(0.20, Enum.EasingStyle.Sine,  Enum.EasingDirection.Out)
+local function TW(o, ti, pr) TweenService:Create(o, ti, pr):Play() end
+local function TWc(o, ti, pr) local t = TweenService:Create(o, ti, pr); t:Play(); return t end
+
+-- limpiar
+for _, g in ipairs({CoreGui, PGui}) do
+    local o = g:FindFirstChild("__BladexExtractorUI")
+    if o then o:Destroy() end
+end
+
+-- root
+local ROOT = PGui
+pcall(function() ROOT = CoreGui end)
+
+-- gui
+local GUI = mk("ScreenGui", {
+    Name = "__BladexExtractorUI", ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset = true, DisplayOrder = 9991,
+}, ROOT)
+
+-- tamaño
+local vp = workspace.CurrentCamera.ViewportSize
+local initW = math.min(SET.DEFAULT_W, vp.X - 16)
+local initH = math.min(SET.DEFAULT_H, vp.Y - 40)
+local initX = math.max(0, math.floor((vp.X - initW) / 2))
+local initY = math.max(0, math.floor((vp.Y - initH) / 2))
+
+-- ventana
+local WIN = mk("Frame", {
+    Name = "MainWindow",
+    Size = UDim2.new(0, initW, 0, initH),
+    Position = UDim2.new(0, initX, 0, initY),
+    BackgroundColor3 = C.WIN, BorderSizePixel = 0,
+    ClipsDescendants = true, ZIndex = 5, Active = true,
+}, GUI)
+corner(WIN, 16); stroke(WIN, C.WBRD, 1.5)
+
+local WIN_SCALE = Instance.new("UIScale", WIN)
+WIN_SCALE.Scale = 1
+
+-- top bar
+local TB = mk("Frame", {
+    Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.HDR2,
+    BorderSizePixel = 0, ZIndex = 20, Active = true,
+}, WIN)
+corner(TB, 16)
+mk("Frame", {Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12), BackgroundColor3 = C.HDR2, BorderSizePixel = 0, ZIndex = 19}, TB)
+mk("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = C.DIV, BorderSizePixel = 0, ZIndex = 21}, TB)
+
+-- icono
+local titleIco = mkIcon(ICO.logo, 20, C.TXTW, TB, true)
+titleIco.Position = UDim2.new(0, 10, 0.5, -10)
+titleIco.ZIndex = 21
+
+-- título
+mk("TextLabel", {Text = "BLADEX EXTRACTOR", TextColor3 = C.TXTW, Font = Enum.Font.Gotham,
+    TextSize = 12, BackgroundTransparency = 1, Size = UDim2.new(0, 110, 1, 0),
+    Position = UDim2.new(0, 38, 0, 0), TextYAlignment = Enum.TextYAlignment.Center,
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21}, TB)
+
+-- botones
+local function titleBtn(iconName, bg, xOff)
+    local b = mk("TextButton", {Text = "", BackgroundColor3 = bg,
+        Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, xOff, 0.5, 0),
+        AnchorPoint = Vector2.new(1, 0.5), BorderSizePixel = 0, ZIndex = 90, AutoButtonColor = false}, TB)
+    corner(b, 4)
+    local bScale = Instance.new("UIScale", b)
+    local ic = mkIcon(iconName, 14, C.TXTW, b, true)
+    ic.Position = UDim2.new(0.5, -7, 0.5, -7)
+    b.MouseEnter:Connect(function() TW(b, TI_FAST, { BackgroundTransparency = 0.25 }); TW(bScale, TI_POP, { Scale = 1.12 }) end)
+    b.MouseLeave:Connect(function() TW(b, TI_SOFT, { BackgroundTransparency = 0 }); TW(bScale, TI_SOFT, { Scale = 1 }) end)
+    return b
+end
+
+local CLOSE_BTN = titleBtn("x", C.CLOSE, -6) 
+local MINI_BTN = titleBtn(ICO.minus, C.MINI, -38)
+
+-- contenido
+local CONTENT = mk("Frame", {
+    Size = UDim2.new(1, 0, 1, -36), Position = UDim2.new(0, 0, 0, 36),
+    BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 15,
+}, WIN)
+
+-- consola
+local CON_OUT_BOX = mk("Frame", {
+    Size = UDim2.new(1, -20, 1, -62), Position = UDim2.new(0, 10, 0, 10),
+    BackgroundColor3 = C.CON_INP, BorderSizePixel = 0, ZIndex = 15,
+}, CONTENT)
+corner(CON_OUT_BOX, 6); stroke(CON_OUT_BOX, C.CON_BRD, 1)
+
+-- scroll
+local CON_SCR = mk("ScrollingFrame", {
+    Size = UDim2.new(1, -8, 1, -8), Position = UDim2.new(0, 4, 0, 4),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 4, ScrollBarImageColor3 = Color3.fromRGB(80,80,80),
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 15,
+}, CON_OUT_BOX)
+vlist(CON_SCR, 2)
+pad(CON_SCR, 4, 4, 6, 6)
+
+-- contador
+local lineCounter = 0
+
+-- estado
+local isOpen = true
+local savedScroll = nil
+local lockScroll = false
+local scrollConn = nil
+
+local function killScroll() if scrollConn then scrollConn:Disconnect(); scrollConn = nil end end
+local function maxScrollY() return math.max(0, CON_SCR.AbsoluteCanvasSize.Y - CON_SCR.AbsoluteWindowSize.Y) end
+
+-- scroll anim
+local function doScrollTo(targetY)
+    if not CON_SCR.Parent then return end
+    killScroll()
+    local startX = CON_SCR.CanvasPosition.X
+    local startY = CON_SCR.CanvasPosition.Y
+    if math.abs(targetY - startY) <= 1 then
+        CON_SCR.CanvasPosition = Vector2.new(startX, targetY); return
+    end
+    local t0 = os.clock()
+    scrollConn = RunService.RenderStepped:Connect(function()
+        if not CON_SCR.Parent or lockScroll then killScroll(); return end
+        local a = math.min((os.clock() - t0) / 0.18, 1)
+        local e = 1 - (1 - a) * (1 - a)
+        local ty = math.min(targetY, maxScrollY())
+        CON_SCR.CanvasPosition = Vector2.new(startX, startY + (ty - startY) * e)
+        if a >= 1 then
+            CON_SCR.CanvasPosition = Vector2.new(startX, maxScrollY())
+            killScroll()
+        end
+    end)
+end
+
+-- fondo
+local function scrollToBottom()
+    if not isOpen or lockScroll then return end
+    task.defer(function()
+        if not isOpen or lockScroll or not CON_SCR.Parent then return end
+        RunService.Heartbeat:Wait()
+        doScrollTo(maxScrollY())
+    end)
+end
+
+-- linea
+local function addLine(text, color, level, iconName)
+    local row = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = lineCounter + 1, ZIndex = 16 }, CON_SCR)
+    local textX = 0
+    local textSizeX = UDim2.new(1, 0, 0, 0)
+
+    if iconName then
+        local ic = mkIcon(iconName, 11, color or C.CON_TXT, row)
+        ic.Position = UDim2.new(0, textX, 0, 2)
+        textX = textX + 16
+        textSizeX = UDim2.new(1, -textX, 0, 0)
+    end
+
+    local lbl = mk("TextLabel", {
+        Size = textSizeX, Position = UDim2.new(0, textX, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, Text = text, TextColor3 = color or C.CON_TXT, TextSize = 11, Font = Enum.Font.Code,
+        TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, ZIndex = 16, Active = false,
+    }, row)
+    lbl:SetAttribute("level", level or "info")
+
+    local rowFade = Instance.new("UIScale", row)
+    rowFade.Scale = 0.96
+    TW(rowFade, TI_SOFT, { Scale = 1 })
+
+    lineCounter = lineCounter + 1
+    scrollToBottom()
+    return row
+end
+
+-- input
+local INPUT_ROW = mk("Frame", {
+    Size = UDim2.new(1, -20, 0, 34), Position = UDim2.new(0, 10, 1, -44), BackgroundTransparency = 1, ZIndex = 15,
+}, CONTENT)
+
+-- icono
+local promptIco = mkIcon(ICO.chevron, 12, C.CON_TXT, INPUT_ROW)
+promptIco.Position = UDim2.new(0, 2, 0.5, -6)
+
+-- fondo
+local INPUT_BG = mk("Frame", {
+    Size = UDim2.new(1, -100, 1, 0), Position = UDim2.new(0, 20, 0, 0), BackgroundColor3 = C.CON_INP, BorderSizePixel = 0, ZIndex = 15,
+}, INPUT_ROW)
+corner(INPUT_BG, 6); local inputStroke = stroke(INPUT_BG, C.CON_BRD, 1)
+
+-- textbox
+local INPUT = mk("TextBox", {
+    Size = UDim2.new(1, -16, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+    BackgroundTransparency = 1, PlaceholderText = "Pega la URL o loadstring(...) aquí",
+    PlaceholderColor3 = C.TXTD, Text = "", TextColor3 = C.CON_TXT, Font = Enum.Font.Code, TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 16,
+}, INPUT_BG)
+
+-- decl
+local exec
+
+INPUT.Focused:Connect(function() TW(inputStroke, TI_SOFT, { Color = C.BLUE, Thickness = 1.5 }) end)
+INPUT.FocusLost:Connect(function(enter)
+    TW(inputStroke, TI_SOFT, { Color = C.CON_BRD, Thickness = 1 })
+    if enter then local c = INPUT.Text; INPUT.Text = ""; exec(c) end
+end)
+
+-- boton run
+local RUN_BTN = mk("TextButton", {
+    Text = "", BackgroundColor3 = Color3.fromRGB(20,80,34), BorderSizePixel = 0, AutoButtonColor = false,
+    Size = UDim2.new(0, 70, 1, 0), Position = UDim2.new(1, -70, 0, 0), ZIndex = 15,
+}, INPUT_ROW)
+corner(RUN_BTN, 6); stroke(RUN_BTN, C.GREEN, 1.2)
+
+local runIco = mkIcon(ICO.play, 14, C.TXTW, RUN_BTN) 
+runIco.Position = UDim2.new(0, 10, 0.5, -7)
+
+mk("TextLabel", {
+    Text = "Run", TextColor3 = C.TXTW, Font = Enum.Font.GothamBold, TextSize = 12,
+    BackgroundTransparency = 1, Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 28, 0, 0),
+    TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 16,
+}, RUN_BTN)
+
+RUN_BTN.MouseEnter:Connect(function() TW(RUN_BTN, TI_FAST, { BackgroundColor3 = Color3.fromRGB(32,110,48) }) end)
+RUN_BTN.MouseLeave:Connect(function() TW(RUN_BTN, TI_SOFT, { BackgroundColor3 = Color3.fromRGB(20,80,34) }) end)
+
+-- historial
+local history = {}
+local histIdx = 0
+
+-- extractor
+exec = function(input)
+    if not input or input:match("^%s*$") then return end
+    table.insert(history, 1, input)
+    if #history > 60 then table.remove(history) end
+    histIdx = 0
+
+    local url = string.match(input, "(https?://[^\"']+)")
+    if not url then
+        addLine("Error: Enlace no válido.", C.CON_ERR, "err", ICO.error)
+        return
+    end
+
+    addLine("Iniciando extracción...", C.CON_INF, "info", ICO.info)
+
+    task.spawn(function()
+        if makefolder and not isfolder("bladex_extract") then
+            pcall(function() makefolder("bladex_extract") end)
+        end
+
+        local hash = string.match(url, "/([a-fA-F0-9]+)$")
+        local archivo_salida = "bladex_extract/payload_" .. (hash or tostring(os.time())) .. ".lua"
+        local capturado = false
+
+        local ok, layer1 = pcall(function() return game:HttpGet(url) end)
+        if not ok or not layer1 then
+            addLine("Error: Red bloqueada o URL expirada.", C.CON_ERR, "err", ICO.error)
+            return
+        end
+
+        -- sandbox
+        local env = setmetatable({}, {__index = getfenv()})
+        env.task = task
+        env.game = {
+            HttpGet = function(self, u)
+                local req_ok, res = pcall(function() return game:HttpGet(u) end)
+                if req_ok and type(res) == "string" and not string.find(res, "<html") then return res end
+            end,
+            GetService = function(self, name)
+                if name == "Players" then return { LocalPlayer = { Kick = function() end } } end
+                return game:GetService(name)
+            end
+        }
+        env.pcall = pcall; env.type = type; env.string = string; env.table = table
+        env.tostring = tostring; env.tonumber = tonumber; env.os = os; env.debug = debug
+        env.getgenv = function() return { LG_DEBUG = false } end
+        env.listfiles = function() return {} end; env.delfile = function() end
+        env.islclosure = function() return false end; env.isfunctionhooked = function() return false end
+
+        -- hook
+        env.loadstring = function(code)
+            if type(code) ~= "string" then return function() end end
+            if string.sub(code, 1, 4) == "--LG" then return function() end end
+
+            if string.find(code, "LuaGate v3 %[2/4%]") then
+                addLine("Capa 2 atrapada. Descargando...", C.CON_OK, "info", ICO.check)
+                local fn = loadstring(code)
+                if fn then setfenv(fn, env); task.spawn(function() pcall(fn) end) end
+                return function() end
+            end
+
+            if #code > 500 and (string.find(code, "function") or string.find(code, "local")) then
+                capturado = true
+                if writefile then
+                    local success = pcall(function() writefile(archivo_salida, code) end)
+                    if success then
+                        addLine("¡Éxito! Guardado en: " .. archivo_salida, C.CON_OK, "ok", ICO.check)
+                    else
+                        addLine("Error al escribir archivo.", C.CON_ERR, "err", ICO.error)
+                    end
+                else
+                    addLine("¡Capa 3 capturada! (Sin writefile)", C.CON_OK, "ok", ICO.check)
+                end
+                return function() end
+            end
+            return loadstring(code)
+        end
+
+        -- capa 1
+        local fn1 = loadstring(layer1)
+        if fn1 then setfenv(fn1, env); pcall(fn1) end
+
+        -- espera
+        local t = 0
+        while not capturado and t < 15 do task.wait(1); t = t + 1 end
+
+        if not capturado then
+            addLine("Error 410: IP bloqueada o enlace expirado.", C.CON_ERR, "err", ICO.error)
+            addLine("Prueba usando VPN o Datos Móviles.", C.CON_WRN, "warn", ICO.warn)
+        end
+    end)
+end
+
+RUN_BTN.MouseButton1Click:Connect(function()
+    local c = INPUT.Text; INPUT.Text = ""; exec(c)
+end)
+
+-- flechas
+INPUT.InputBegan:Connect(function(inp)
+    if inp.KeyCode == Enum.KeyCode.Up then
+        histIdx = math.min(histIdx + 1, #history)
+        INPUT.Text = history[histIdx] or ""
+        task.defer(function() INPUT.CursorPosition = #INPUT.Text + 1 end)
+    elseif inp.KeyCode == Enum.KeyCode.Down then
+        histIdx = math.max(histIdx - 1, 0)
+        INPUT.Text = history[histIdx] or ""
+        task.defer(function() INPUT.CursorPosition = #INPUT.Text + 1 end)
+    end
+end)
+
+-- conexiones
+local connections = {}
+
+local dragging, dragStart, winStart = false, nil, nil
+local resizing, activeHandle = false, nil
+local resizeStart, resizeWinPos, resizeWinSize = nil, nil, nil
+
+-- hitbox
+local function pointInGui(obj, px, py)
+    if not obj or not obj.Parent then return false end
+    local ap, as = obj.AbsolutePosition, obj.AbsoluteSize
+    return px >= ap.X and px <= ap.X + as.X and py >= ap.Y and py <= ap.Y + as.Y
+end
+
+-- check UI
+local function isOverUI(px, py)
+    if pointInGui(CLOSE_BTN, px, py) then return true end
+    if pointInGui(MINI_BTN, px, py) then return true end
+    if pointInGui(INPUT_ROW, px, py) then return true end
+    if pointInGui(INPUT, px, py) then return true end
+    if pointInGui(RUN_BTN, px, py) then return true end
+    if pointInGui(CON_SCR, px, py) then return true end
+    return false
+end
+
+-- drag
+local function startDrag(pos)
+    dragging = true; dragStart = pos; winStart = WIN.Position
+    TW(WIN_SCALE, TI_FAST, { Scale = 1.01 })
+end
+local function updateDrag(pos)
+    if not dragging then return end
+    local d = pos - dragStart
+    local v = workspace.CurrentCamera.ViewportSize
+    local nx = math.max(0, math.min(winStart.X.Offset + d.X, v.X - 100))
+    local ny = math.max(0, math.min(winStart.Y.Offset + d.Y, v.Y - 40))
+    WIN.Position = UDim2.new(0, nx, 0, ny)
+end
+local function stopDrag()
+    dragging = false; dragStart = nil; winStart = nil
+    TW(WIN_SCALE, TI_SOFT, { Scale = 1 })
+end
+
+connections[#connections + 1] = TB.InputBegan:Connect(function(inp, gp)
+    if gp or (inp.UserInputType ~= Enum.UserInputType.MouseButton1 and inp.UserInputType ~= Enum.UserInputType.Touch) then return end
+    if isOverUI(inp.Position.X, inp.Position.Y) then return end
+    startDrag(Vector2.new(inp.Position.X, inp.Position.Y))
+end)
+
+connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
+    if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+        updateDrag(Vector2.new(inp.Position.X, inp.Position.Y))
+    end
+end)
+
+connections[#connections + 1] = UIS.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputTyp
