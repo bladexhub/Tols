@@ -1,4 +1,4 @@
--- BLADEX EXTRACTOR
+-- EXTRACTOR
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
@@ -12,7 +12,7 @@ local PGui = LP:WaitForChild("PlayerGui", 10)
 local URL_LOADER = "https://raw.githubusercontent.com/BladexDevX/loader/refs/heads/main/BladexIconLoader"
 local URL_THEME_DARK = "https://raw.githubusercontent.com/bladexhub/Tols/refs/heads/main/f9/config%20settings"
 
--- CORRECCIÓN AQUÍ: función anónima para evitar error de sintaxis en móviles
+-- get
 local function fetch(url)
     local ok, res = pcall(function() return game:HttpGet(url) end)
     if ok and type(res) == "string" and #res > 0 then return res end
@@ -248,13 +248,14 @@ local function addLine(text, color, level, iconName)
 end
 
 -- ==========================================
--- OPTIMIZACIÓN ULTRA
+-- FPS Y OPTIMIZACIÓN ULTRA
 -- ==========================================
 local isOpt = false
 local oldQ = nil
 local oldShadow = true
 local oldFog = 100000
 
+-- opt on
 local function applyOpt()
     if isOpt then return end
     isOpt = true
@@ -287,6 +288,7 @@ local function applyOpt()
     end)
 end
 
+-- opt off
 local function restoreOpt()
     if not isOpt then return end
     addLine("Restaurando gráficos...", C.CON_SYS, "info", ICO.check)
@@ -312,6 +314,7 @@ local function restoreOpt()
     isOpt = false
 end
 
+-- fps chk
 local fFrames = 0
 local fTime = 0
 RunService.RenderStepped:Connect(function(dt)
@@ -381,7 +384,7 @@ local function extractURL(input)
     return nil
 end
 
--- paths
+-- path
 local function makePaths(url)
     local host = string.match(url, "^https?://([^/%?#]+)") or "unknown.host"
     host = host:gsub(":%d+$", ""):gsub("[^%w%.%-_]", "_")
@@ -455,9 +458,10 @@ exec = function(input)
 
     addLine("URL detectada.", C.CON_SYS, "info", ICO.chevron)
 
+    -- get bs
     local bsFromInput = input:match("_bsdata%d+%s*=%s*(%b{})")
     
-    -- Extraer variables globales
+    -- get env
     local sharedGenv = {}
     for name, tbl in input:gmatch("getgenv%(%)%.([%w_]+)%s*=%s*(%b{})") do
         local chunk = loadstring("return " .. tbl)
@@ -504,7 +508,7 @@ exec = function(input)
         env.print = env.warn
         env.error = function(m) addLine("error: " .. tostring(m), C.CON_ERR, "err", ICO.error) end
         
-        -- Inyectar getgenv personalizado
+        -- env set
         env.getgenv = function() return sharedGenv end
         
         env.listfiles = function() return {} end; env.delfile = function() end
@@ -531,7 +535,7 @@ exec = function(input)
         env.bit32 = fb32; env.bit = bit or fb32
         env.math = math; env.utf8 = utf8; env.coroutine = coroutine
 
-        -- game
+        -- env game
         local realGame = game
         env.game = setmetatable({}, {__index = function(_, k)
             if k == "HttpGet" or k == "HttpGetAsync" then
@@ -555,7 +559,7 @@ exec = function(input)
             return realGame[k]
         end})
 
-        -- save
+        -- write
         local function writeLayer(code, tag)
             layersCapturadas = layersCapturadas + 1
             local out = pathFor(layersCapturadas)
@@ -608,7 +612,7 @@ exec = function(input)
         env.load = env.loadstring
         env.loadfile = function(p) local c = readfile and readfile(p); if c then return env.loadstring(c) end; return nil end
 
-        -- root
+        -- run
         addLine("Ejecutando raíz...", C.CON_INF, "info", ICO.info)
         task.wait(0.3) 
         
@@ -628,15 +632,15 @@ exec = function(input)
         end
 
         if layersCapturadas == 0 then
-            addLine("Error 410: Enlace caído o fallo de Loader.", C.CON_ERR, "err", ICO.error); return
+            addLine("Error 410: Enlace caído o fallo.", C.CON_ERR, "err", ICO.error); return
         end
 
-        -- fase2
+        -- f2
         if #luarmorLayers > 0 then
             addLine(" ", C.CON_SYS)
             addLine("── Fase 2: " .. #luarmorLayers .. " Lua", C.CON_INF, "info", ICO.info)
 
-            -- bsdata
+            -- get bsd
             local bsdata0, bsdata0Src = nil, nil
             if bsFromInput then bsdata0 = bsFromInput; bsdata0Src = "input" end
 
@@ -739,6 +743,7 @@ exec = function(input)
                     end
 
                     idx = idx + 1
+                    -- clr
                     addLine("  Limpiando RAM...", C.CON_SYS, "info", ICO.check)
                     collectgarbage("collect") 
                     task.wait(0.5) 
