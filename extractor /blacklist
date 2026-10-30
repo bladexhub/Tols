@@ -1,10 +1,14 @@
 return {
     ALLOW = {
-        "luarmor.net", "luarmor.xyz", "roblox.com", "rbxcdn.com", "rbx.com",
-        "robloxlua.com", "jsdelivr.net", "unpkg.com", "githubusercontent.com",
-        "github.com", "googleapis.com", "gstatic.com",
+        -- Permitidos
+        "luarmor.net", "api.luarmor.net", "luarmor.xyz",
+        "zyox-api.zyoxkeys.workers.dev", "webproxy.squareweb.app",
+        "roblox.com", "rbxcdn.com", "rbx.com", "robloxlua.com",
+        "jsdelivr.net", "unpkg.com", "githubusercontent.com", "github.com",
+        "googleapis.com", "gstatic.com"
     },
     BLACK = {
+        -- Bloqueados
         "discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com",
         "ipify.org", "ip-api.com", "ipinfo.io", "ipwho.is", "ipapi.co", "ipapi.is",
         "ipdata.co", "myip.com", "wtfismyip.com", "ident.me", "ip.seeip.org",
@@ -18,5 +22,6 @@ return {
         "api.telegram.org", "sentry.io", "ingest.sentry.io", "google-analytics.com",
         "analytics.google.com", "api.segment.io", "mixpanel.com", "amplitude.com",
         "posthog.com", "statcounter.com", "api.mixpanel.com",
+        "bloxflip.com", "rbxflip.com"
     }
 }
