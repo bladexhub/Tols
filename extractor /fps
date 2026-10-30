@@ -1,0 +1,103 @@
+--optimizer
+
+local RunService   = game:GetService("RunService")
+local Lighting     = game:GetService("Lighting")
+local UserSettings = game:GetService("UserSettings")
+
+--cfg
+local THRESHOLD_ON   = 30
+local THRESHOLD_OFF  = 40
+local CHECK_INTERVAL = 1.5
+local FOG_ULTRA      = 150
+local SILENT         = true
+
+--state
+local isOpt = false
+local oldQ, oldShadow, oldFog, oldEnvDiff, oldEnvSpec
+
+--on
+local function applyOpt()
+    if isOpt then return end
+    isOpt = true
+
+    pcall(function()
+        local s = UserSettings:GetService("UserGameSettings")
+        oldQ = s.SavedQualityLevel
+        s.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+    end)
+
+    pcall(function()
+        oldShadow  = Lighting.GlobalShadows
+        oldFog     = Lighting.FogEnd
+        oldEnvDiff = Lighting.EnvironmentDiffuseScale
+        oldEnvSpec = Lighting.EnvironmentSpecularScale
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = FOG_ULTRA
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+    end)
+
+    --tex
+    task.spawn(function()
+        local count = 0
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("Decal") or v:IsA("Texture") or v:IsA("SurfaceAppearance") then
+                pcall(function() v.Transparency = 1 end)
+                count = count + 1
+                if count % 50 == 0 then task.wait() end
+            end
+        end
+    end)
+
+    if not SILENT then print("[Optimizer] Ultra ON") end
+end
+
+--off
+local function restoreOpt()
+    if not isOpt then return end
+
+    pcall(function()
+        if oldQ then
+            UserSettings:GetService("UserGameSettings").SavedQualityLevel = oldQ
+        end
+        Lighting.GlobalShadows = oldShadow or true
+        Lighting.FogEnd = oldFog or 100000
+        Lighting.EnvironmentDiffuseScale = oldEnvDiff or 1
+        Lighting.EnvironmentSpecularScale = oldEnvSpec or 1
+    end)
+
+    --tex
+    task.spawn(function()
+        local count = 0
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("Decal") or v:IsA("Texture") or v:IsA("SurfaceAppearance") then
+                pcall(function() v.Transparency = 0 end)
+                count = count + 1
+                if count % 50 == 0 then task.wait() end
+            end
+        end
+    end)
+
+    isOpt = false
+    if not SILENT then print("[Optimizer] Restaurado") end
+end
+
+--fps loop
+local frames, elapsed = 0, 0
+RunService.RenderStepped:Connect(function(dt)
+    frames  = frames + 1
+    elapsed = elapsed + dt
+
+    if elapsed >= CHECK_INTERVAL then
+        local fps = frames / elapsed
+        if fps < THRESHOLD_ON and not isOpt then
+            applyOpt()
+        elseif fps > THRESHOLD_OFF and isOpt then
+            restoreOpt()
+        end
+        frames, elapsed = 0, 0
+    end
+end)
+
+if not SILENT then print("[Optimizer] OK") end
+return true
