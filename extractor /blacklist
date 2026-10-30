@@ -1,27 +1,34 @@
-return {
-    ALLOW = {
-        -- Permitidos
-        "luarmor.net", "api.luarmor.net", "luarmor.xyz",
-        "zyox-api.zyoxkeys.workers.dev", "webproxy.squareweb.app",
-        "roblox.com", "rbxcdn.com", "rbx.com", "robloxlua.com",
-        "jsdelivr.net", "unpkg.com", "githubusercontent.com", "github.com",
-        "googleapis.com", "gstatic.com"
-    },
-    BLACK = {
-        -- Bloqueados
-        "discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com",
-        "ipify.org", "ip-api.com", "ipinfo.io", "ipwho.is", "ipapi.co", "ipapi.is",
-        "ipdata.co", "myip.com", "wtfismyip.com", "ident.me", "ip.seeip.org",
-        "api.myip.com", "ifconfig.me", "ifconfig.co", "icanhazip.com",
-        "checkip.amazonaws.com", "ip-api.io", "freeipapi.com", "ipbase.com",
-        "grabify.link", "iplogger.org", "iplogger.com", "iplogger.ru", "iplogger.co",
-        "2no.co", "yip.su", "blasze.tk", "ps3cfw.com", "webhook.site",
-        "requestbin.net", "requestbin.io", "pipedream.net", "beeceptor.com",
-        "hookbin.com", "webhook.lewisakura.moe", "webhook.lewisakura.xyz",
-        "httpbin.org", "postman-echo.com", "echo.zuplo.com", "hooks.slack.com",
-        "api.telegram.org", "sentry.io", "ingest.sentry.io", "google-analytics.com",
-        "analytics.google.com", "api.segment.io", "mixpanel.com", "amplitude.com",
-        "posthog.com", "statcounter.com", "api.mixpanel.com",
-        "bloxflip.com", "rbxflip.com"
-    }
+local ALLOW_LIST = {
+    -- luarmor / keys
+    "luarmor.net", "api.luarmor.net", "luarmor.xyz",
+    "zyox-api.zyoxkeys.workers.dev", "webproxy.squareweb.app",
+    -- roblox / cdn
+    "roblox.com", "rbxcdn.com", "rbx.com", "robloxlua.com",
+    -- cdn codigo
+    "jsdelivr.net", "unpkg.com", "githubusercontent.com", "github.com",
+    -- google
+    "googleapis.com", "gstatic.com",
+}
+
+local BLACK_LIST = {
+    -- discord
+    "discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com",
+    -- ip
+    "ipify.org", "ip-api.com", "ipinfo.io", "ipwho.is", "ipapi.co", "ipapi.is",
+    "ipdata.co", "myip.com", "wtfismyip.com", "ident.me", "ip.seeip.org",
+    "api.myip.com", "ifconfig.me", "ifconfig.co", "icanhazip.com",
+    "checkip.amazonaws.com", "ip-api.io", "freeipapi.com", "ipbase.com",
+    -- iplogger / webhooks
+    "grabify.link", "iplogger.org", "iplogger.com", "iplogger.ru", "iplogger.co",
+    "2no.co", "yip.su", "blasze.tk", "ps3cfw.com", "webhook.site",
+    "requestbin.net", "requestbin.io", "pipedream.net", "beeceptor.com",
+    "hookbin.com", "webhook.lewisakura.moe", "webhook.lewisakura.xyz",
+    "httpbin.org", "postman-echo.com", "echo.zuplo.com", "hooks.slack.com",
+    "api.telegram.org",
+    -- analytics
+    "sentry.io", "ingest.sentry.io", "google-analytics.com",
+    "analytics.google.com", "api.segment.io", "mixpanel.com", "amplitude.com",
+    "posthog.com", "statcounter.com", "api.mixpanel.com",
+    -- gambling
+    "bloxflip.com", "rbxflip.com",
 }
