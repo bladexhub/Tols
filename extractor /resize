@@ -1,0 +1,49 @@
+--resize
+local RESIZE_EDGE = SET.RESIZE_EDGE
+local cornerHandles = {
+    {name="TL", px=0, py=0, dx=-1, dy=-1}, {name="TR", px=1, py=0, dx=1, dy=-1},
+    {name="BL", px=0, py=1, dx=-1, dy=1}, {name="BR", px=1, py=1, dx=1, dy=1},
+}
+for _, h in ipairs(cornerHandles) do
+    local hf = mk("Frame", {Name="Rsz_"..h.name,
+        Size=UDim2.new(0, RESIZE_EDGE, 0, RESIZE_EDGE),
+        Position=UDim2.new(h.px, h.dx == 1 and -RESIZE_EDGE or 0, h.py, h.dy == 1 and -RESIZE_EDGE or 0),
+        BackgroundTransparency=1, ZIndex=10, Active=true}, WIN)
+    hf.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            local px, py = inp.Position.X, inp.Position.Y
+            if pointInGui(CLOSE_BTN, px, py) or pointInGui(MINI_BTN, px, py) or pointInGui(STOP_BTN, px, py) or pointInGui(TB, px, py) then return end
+            activeHandle = h; resizing = true
+            resizeStart = Vector2.new(inp.Position.X, inp.Position.Y)
+            resizeWinPos = WIN.Position; resizeWinSize = WIN.Size
+            TW(WIN_SCALE, TI_FAST, {Scale=1.015})
+        end
+    end)
+end
+local function updateResize(pos)
+    if not resizing or not activeHandle then return end
+    local d = pos - resizeStart
+    local vp = workspace.CurrentCamera.ViewportSize
+    local W, H = resizeWinSize.X.Offset, resizeWinSize.Y.Offset
+    local PX, PY = resizeWinPos.X.Offset, resizeWinPos.Y.Offset
+    local nW, nH, nPX, nPY = W, H, PX, PY
+    local maxW = math.min(1200, vp.X - PX)
+    local maxH = math.min(900,  vp.Y - PY)
+    if activeHandle.dx == 1 then nW = math.min(math.max(SET.MIN_W, W + d.X), maxW)
+    elseif activeHandle.dx == -1 then
+        local dw = math.min(d.X, W - SET.MIN_W); nW = W - dw; nPX = math.max(0, PX + dw)
+    end
+    if activeHandle.dy == 1 then nH = math.min(math.max(SET.MIN_H, H + d.Y), maxH)
+    elseif activeHandle.dy == -1 then
+        local dh = math.min(d.Y, H - SET.MIN_H); nH = H - dh; nPY = math.max(0, PY + dh)
+    end
+    WIN.Size = UDim2.new(0, nW, 0, nH)
+    WIN.Position = UDim2.new(0, nPX, 0, nPY)
+end
+connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
+    if not resizing or not activeHandle then return end
+    if inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch then
+        updateResize(Vector2.new(inp.Position.X, inp.Position.Y))
+    end
+end)
