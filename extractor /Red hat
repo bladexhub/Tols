@@ -1,6 +1,6 @@
---v1
+--Red Hat
 local genv = (getgenv and getgenv()) or _G
-if type(genv.BladexGuard) == "table" and genv.BladexGuard.Loaded then return genv.BladexGuard end
+if type(genv.BladexRedHat) == "table" and genv.BladexRedHat.Loaded then return genv.BladexRedHat end
 
 local cloneref = cloneref or function(x) return x end
 local newcclosure = newcclosure or function(f) return f end
@@ -11,7 +11,7 @@ local setreadonly = setreadonly or function(t, v)
 	if v and make_readonly then make_readonly(t) elseif (not v) and make_writeable then make_writeable(t) end
 end
 local getnamecallmethod, setnamecallmethod = getnamecallmethod, (setnamecallmethod or function() end)
-assert(getrawmetatable and getnamecallmethod, "BLADEX Guard: executor no soportado")
+assert(getrawmetatable and getnamecallmethod, "Red Hat: executor no soportado")
 
 local sfind, slower, ssub, sgsub, sgmatch, smatch = string.find, string.lower, string.sub, string.gsub, string.gmatch, string.match
 local schar, sbyte, sreverse = string.char, string.byte, string.reverse
@@ -21,6 +21,12 @@ local Players = cloneref(game:GetService("Players"))
 local StarterGui = cloneref(game:GetService("StarterGui"))
 local LocalPlayer = Players.LocalPlayer
 while not LocalPlayer do task.wait() LocalPlayer = Players.LocalPlayer end
+
+local BLACKHAT_DIR = "Bladex/blackhat_logs"
+local LOG_FILE = BLACKHAT_DIR .. "/eventos_redhat.txt"
+
+pcall(makefolder, "Bladex")
+pcall(makefolder, BLACKHAT_DIR)
 
 local Config = {
 	MaxLogs = 500,
@@ -35,7 +41,7 @@ local Config = {
 	Watchdog = true,
 }
 do
-	local u = genv.BladexGuardConfig
+	local u = genv.BladexRedHatConfig
 	if type(u) == "table" then
 		for k in pairs(Config) do if u[k] ~= nil then Config[k] = u[k] end end
 	end
@@ -62,16 +68,32 @@ local function Log(level, category, message, detail)
 	Stats[level] = (Stats[level] or 0) + 1
 	Stats.ByCategory[category] = (Stats.ByCategory[category] or 0) + 1
 	for _, cb in ipairs(Listeners) do task.spawn(pcall, cb, e) end
+	
 	if Config.Notify and level ~= "INFO" then
 		local now = os.clock()
 		if not lastNotify[category] or now - lastNotify[category] > 3 then
 			lastNotify[category] = now
 			task.defer(pcall, function()
 				StarterGui:SetCore("SendNotification", {
-					Title = "BLADEX Guard [" .. level .. "]", Text = ssub(message, 1, 90), Duration = 4,
+					Title = "RED HAT [" .. level .. "]", Text = ssub(message, 1, 90), Duration = 4,
 				})
 			end)
 		end
+	end
+
+	if writefile and (level == "BLOCK" or level == "WARN") then
+		task.spawn(function()
+			local text = string.format("[%s] [%s] [%s] %s | %s\n", 
+				os.date("%Y-%m-%d %H:%M:%S"), level, category, message, tostring(detail))
+			pcall(function()
+				if appendfile then
+					appendfile(LOG_FILE, text)
+				else
+					local old = isfile(LOG_FILE) and readfile(LOG_FILE) or ""
+					writefile(LOG_FILE, old .. text)
+				end
+			end)
+		end)
 	end
 end
 
@@ -309,7 +331,6 @@ local function hostAllowed(url)
 	return false
 end
 
--- FIX: BYPASS PARA LA UI (isInternalFetch)
 local function NetGate(kind, url, headers, body)
     if rawget(genv, "isInternalFetch") == true then return false end
     
@@ -334,7 +355,7 @@ local function NetGate(kind, url, headers, body)
 end
 
 local function FakeResponse()
-	return { Success = false, StatusCode = 403, StatusMessage = "Blocked by BLADEX Guard", Headers = {}, Body = "" }
+	return { Success = false, StatusCode = 403, StatusMessage = "Blocked by RED HAT", Headers = {}, Body = "" }
 end
 local function FakeInternal()
 	return { Start = function(_, cb) if type(cb) == "function" then task.spawn(cb, false, FakeResponse()) end end, Cancel = function() end }
@@ -572,7 +593,7 @@ task.spawn(function()
 			InstallMeta()
 			if os.clock() - lastTamper > 5 then
 				lastTamper = os.clock()
-				Log("WARN", "tamper", "Alguien modificó los hooks del Guard; reinstalados")
+				Log("WARN", "tamper", "Alguien modificó los hooks del Red Hat; reinstalados")
 			end
 		end
 	end
@@ -623,11 +644,11 @@ function API.Analyze(src) return Analyze(src) end
 function API.Decode(text) return DeepDecode(text) end
 function API.Entropy(src) return Entropy(src) end
 
-genv.BladexGuard = setmetatable({}, {
+genv.BladexRedHat = setmetatable({}, {
 	__index = API,
 	__newindex = function() end,
-	__metatable = "BLADEX_GUARD_LOCKED",
+	__metatable = "BLADEX_REDHAT_LOCKED",
 })
 
-Log("INFO", "core", "BLADEX Guard v" .. API.Version .. " activo")
-return genv.BladexGuard
+Log("INFO", "core", "Red Hat Guardian v" .. API.Version .. " activo")
+return genv.BladexRedHat
