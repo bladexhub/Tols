@@ -1,0 +1,398 @@
+local UI = {}
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local LP = Players.LocalPlayer
+local PGui = LP:WaitForChild("PlayerGui", 10)
+
+local C, getIcon, mkIcon
+
+local SET = { DEFAULT_W=620, DEFAULT_H=420, MIN_W=360, MIN_H=240, RESIZE_EDGE=26 }
+
+local TI_FAST = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_POP  = TweenInfo.new(0.30, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
+local TI_SOFT = TweenInfo.new(0.20, Enum.EasingStyle.Sine,  Enum.EasingDirection.Out)
+
+local function TW(o, ti, pr) TweenService:Create(o, ti, pr):Play() end
+local function TWc(o, ti, pr) local t = TweenService:Create(o, ti, pr); t:Play(); return t end
+
+local function mk(cls, props, parent)
+    local o = Instance.new(cls)
+    for k, v in pairs(props) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
+local function corner(p, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 6); c.Parent = p; return c end
+local function stroke(p, col, th) local s = Instance.new("UIStroke"); s.Color = col; s.Thickness = th or 1; s.Parent = p; return s end
+local function pad(p, t, b, l, r)
+    local u = Instance.new("UIPadding")
+    u.PaddingTop = UDim.new(0, t); u.PaddingBottom = UDim.new(0, b)
+    u.PaddingLeft = UDim.new(0, l); u.PaddingRight = UDim.new(0, r); u.Parent = p
+end
+local function vlist(p, sp)
+    local l = Instance.new("UIListLayout")
+    l.FillDirection = Enum.FillDirection.Vertical
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Padding = UDim.new(0, sp or 0); l.Parent = p
+end
+
+local GUI, WIN, WIN_SCALE, TB, CLOSE_BTN, MINI_BTN
+local CON_SCR, INPUT, RUN_BTN, REOPEN_BTN, shieldIco
+local isOpen, dragging, dragStart, winStart = true, false, nil, nil
+local resizing, activeHandle, resizeStart, resizeWinPos, resizeWinSize = false, nil, nil, nil, nil
+local execRunning = false
+local onRunCallback = nil
+
+function UI.Init(theme, getIconFn, mkIconFn)
+    C = theme
+    getIcon = getIconFn
+    mkIcon = mkIconFn
+
+    for _, g in ipairs({CoreGui, PGui}) do
+        local o = g:FindFirstChild("__BladexExtractorUI")
+        if o then o:Destroy() end
+    end
+    local ROOT = PGui
+    pcall(function() ROOT = CoreGui end)
+
+    GUI = mk("ScreenGui", {
+        Name="__BladexExtractorUI", ResetOnSpawn=false,
+        ZIndexBehavior=Enum.ZIndexBehavior.Sibling, IgnoreGuiInset=true, DisplayOrder=9991,
+    }, ROOT)
+
+    local vp = workspace.CurrentCamera.ViewportSize
+    local initW = math.min(SET.DEFAULT_W, vp.X - 16)
+    local initH = math.min(SET.DEFAULT_H, vp.Y - 40)
+    local initX = math.max(0, math.floor((vp.X - initW) / 2))
+    local initY = math.max(0, math.floor((vp.Y - initH) / 2))
+
+    WIN = mk("Frame", {
+        Name="MainWindow", Size=UDim2.new(0,initW,0,initH),
+        Position=UDim2.new(0,initX,0,initY),
+        BackgroundColor3=C.WIN, BorderSizePixel=0, ClipsDescendants=true, ZIndex=5, Active=true,
+    }, GUI)
+    corner(WIN, 16); stroke(WIN, C.WBRD, 1.5)
+    WIN_SCALE = Instance.new("UIScale", WIN); WIN_SCALE.Scale = 1
+
+    TB = mk("Frame", {Size=UDim2.new(1,0,0,36), BackgroundColor3=C.HDR2, BorderSizePixel=0, ZIndex=20, Active=true, ClipsDescendants=true}, WIN)
+    corner(TB, 16)
+    mk("Frame", {Size=UDim2.new(1,0,0,12), Position=UDim2.new(0,0,1,-12), BackgroundColor3=C.HDR2, BorderSizePixel=0, ZIndex=19}, TB)
+    mk("Frame", {Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,1,-1), BackgroundColor3=C.DIV, BorderSizePixel=0, ZIndex=21}, TB)
+
+    local titleIco = mkIcon("bladex-hud-logo", 20, C.TXTW, TB, true)
+    titleIco.Position = UDim2.new(0, 10, 0.5, -10); titleIco.ZIndex = 21
+
+    mk("TextLabel", {Text="BLADEX EXTRACTOR", TextColor3=C.TXTW, Font=Enum.Font.Gotham,
+        TextSize=12, BackgroundTransparency=1, Size=UDim2.new(0,160,1,0),
+        Position=UDim2.new(0,38,0,0), TextYAlignment=Enum.TextYAlignment.Center,
+        TextXAlignment=Enum.TextXAlignment.Left, ZIndex=21}, TB)
+
+    shieldIco = mkIcon("shield-check", 16, Color3.fromRGB(0, 255, 100), TB)
+    shieldIco.Position = UDim2.new(0, 160, 0.5, -8); shieldIco.ZIndex = 21
+    shieldIco.Visible = false
+
+    local function titleBtn(iconName, bg, xOff)
+        local b = mk("TextButton", {Text="", BackgroundColor3=bg, Size=UDim2.new(0,28,0,22),
+            Position=UDim2.new(1,xOff,0.5,0), AnchorPoint=Vector2.new(1,0.5),
+            BorderSizePixel=0, ZIndex=90, AutoButtonColor=false, ClipsDescendants=true}, TB)
+        corner(b, 4)
+        local bScale = Instance.new("UIScale", b)
+        local ic = mkIcon(iconName, 14, C.TXTW, b, true); ic.Position = UDim2.new(0.5, -7, 0.5, -7)
+        b:SetAttribute("r", bg.R); b:SetAttribute("g", bg.G); b:SetAttribute("b", bg.B)
+        local function getBg() return Color3.new(b:GetAttribute("r"), b:GetAttribute("g"), b:GetAttribute("b")) end
+        b.MouseEnter:Connect(function()
+            if not b.Parent then return end
+            TW(b, TI_FAST, {BackgroundColor3 = getBg():Lerp(Color3.new(1,1,1), 0.15)})
+            TW(bScale, TI_POP, {Scale = 1.12})
+        end)
+        b.MouseLeave:Connect(function()
+            if not b.Parent then return end
+            TW(b, TI_SOFT, {BackgroundColor3 = getBg()}); TW(bScale, TI_SOFT, {Scale = 1})
+        end)
+        return b, ic
+    end
+
+    CLOSE_BTN = titleBtn("x", Color3.fromRGB(244, 46, 22), -6)
+    MINI_BTN  = titleBtn("minus", Color3.fromRGB(0, 0, 255), -38)
+
+    local CONTENT = mk("Frame", {Size=UDim2.new(1,0,1,-36), Position=UDim2.new(0,0,0,36),
+        BackgroundTransparency=1, ClipsDescendants=true, ZIndex=15}, WIN)
+    local CON_OUT_BOX = mk("Frame", {Size=UDim2.new(1,-20,1,-62), Position=UDim2.new(0,10,0,10),
+        BackgroundColor3=C.CON_INP, BorderSizePixel=0, ZIndex=15, ClipsDescendants=true}, CONTENT)
+    corner(CON_OUT_BOX, 6); stroke(CON_OUT_BOX, C.CON_BRD, 1)
+    CON_SCR = mk("ScrollingFrame", {Size=UDim2.new(1,-8,1,-8), Position=UDim2.new(0,4,0,4),
+        BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=4,
+        ScrollBarImageColor3=Color3.fromRGB(80,80,80), CanvasSize=UDim2.new(0,0,0,0),
+        AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=15, ClipsDescendants=true}, CON_OUT_BOX)
+    vlist(CON_SCR, 2); pad(CON_SCR, 4, 4, 6, 6)
+
+    local INPUT_ROW = mk("Frame", {Size=UDim2.new(1,-20,0,34), Position=UDim2.new(0,10,1,-44),
+        BackgroundTransparency=1, ZIndex=15, ClipsDescendants=false}, CONTENT)
+    local promptIco = mkIcon("chevron-right", 12, C.CON_TXT, INPUT_ROW); promptIco.Position = UDim2.new(0, 2, 0.5, -6)
+
+    local INPUT_BG = mk("Frame", {Size=UDim2.new(1,-100,1,-6), Position=UDim2.new(0,20,0,3),
+        BackgroundColor3=C.CON_INP, BorderSizePixel=0, ZIndex=15, ClipsDescendants=false}, INPUT_ROW)
+    corner(INPUT_BG, 6); 
+    local inputStroke = stroke(INPUT_BG, C.CON_BRD, 1)
+    INPUT = mk("TextBox", {Size=UDim2.new(1,-16,1,0), Position=UDim2.new(0,8,0,0),
+        BackgroundTransparency=1, PlaceholderText='URL o loadstring(game:HttpGet("..."))()',
+        PlaceholderColor3=C.TXTD, Text="", TextColor3=C.CON_TXT, Font=Enum.Font.Code, TextSize=12,
+        TextXAlignment=Enum.TextXAlignment.Left, ClearTextOnFocus=false, ZIndex=16, ClipsDescendants=true}, INPUT_BG)
+
+    RUN_BTN = mk("TextButton", {Text="", BackgroundColor3=Color3.fromRGB(20,80,34),
+        BorderSizePixel=0, AutoButtonColor=false, Size=UDim2.new(0,70,1,0),
+        Position=UDim2.new(1,-70,0,0), ZIndex=15, ClipsDescendants=true}, INPUT_ROW)
+    corner(RUN_BTN, 6); 
+    local runStroke = stroke(RUN_BTN, C.GREEN, 1.2)
+    local runIco = mkIcon("play", 14, C.TXTW, RUN_BTN); runIco.Position = UDim2.new(0, 10, 0.5, -7)
+    local runLbl = mk("TextLabel", {Text="RUN", TextColor3=C.TXTW, Font=Enum.Font.GothamBold, TextSize=12,
+        BackgroundTransparency=1, Size=UDim2.new(1,-30,1,0), Position=UDim2.new(0,28,0,0),
+        TextXAlignment=Enum.TextXAlignment.Left, ZIndex=16}, RUN_BTN)
+
+    INPUT.Focused:Connect(function() 
+        if not execRunning then inputStroke.Color = C.BLUE; inputStroke.Thickness = 1.5 end
+    end)
+    INPUT.FocusLost:Connect(function(enter)
+        if not execRunning then inputStroke.Color = C.CON_BRD; inputStroke.Thickness = 1 end
+        if enter and not execRunning and onRunCallback then
+            local c = INPUT.Text; INPUT.Text = ""
+            local ok, err = pcall(onRunCallback, c)
+            if not ok then print("Error Int: " .. tostring(err)) end
+        end
+    end)
+
+    RUN_BTN.MouseButton1Click:Connect(function()
+        if execRunning then return end
+        local c = INPUT.Text; INPUT.Text = ""
+        if onRunCallback then pcall(onRunCallback, c) end
+    end)
+    RUN_BTN.MouseEnter:Connect(function() if not execRunning then TW(RUN_BTN, TI_FAST, {BackgroundColor3=Color3.fromRGB(32,110,48)}) end end)
+    RUN_BTN.MouseLeave:Connect(function() if not execRunning then TW(RUN_BTN, TI_SOFT, {BackgroundColor3=Color3.fromRGB(20,80,34)}) end end)
+
+    local history, histIdx = {}, 0
+    INPUT.InputBegan:Connect(function(inp)
+        if execRunning then return end
+        if inp.KeyCode == Enum.KeyCode.Up then
+            histIdx = math.min(histIdx + 1, #history); INPUT.Text = history[histIdx] or ""
+            task.defer(function() INPUT.CursorPosition = #INPUT.Text + 1 end)
+        elseif inp.KeyCode == Enum.KeyCode.Down then
+            histIdx = math.max(histIdx - 1, 0); INPUT.Text = history[histIdx] or ""
+            task.defer(function() INPUT.CursorPosition = #INPUT.Text + 1 end)
+        end
+    end)
+
+    local connections = {}
+    local function pointInGui(obj, px, py)
+        if not obj or not obj.Parent then return false end
+        local ap, as = obj.AbsolutePosition, obj.AbsoluteSize
+        return px >= ap.X and px <= ap.X + as.X and py >= ap.Y and py <= ap.Y + as.Y
+    end
+    local function isOverUI(px, py)
+        return pointInGui(CLOSE_BTN, px, py) or pointInGui(MINI_BTN, px, py)
+            or pointInGui(INPUT_ROW, px, py) or pointInGui(INPUT, px, py)
+            or pointInGui(RUN_BTN, px, py) or pointInGui(CON_SCR, px, py)
+    end
+    local function startDrag(pos) dragging = true; dragStart = pos; winStart = WIN.Position; TW(WIN_SCALE, TI_FAST, {Scale=1.01}) end
+    local function updateDrag(pos)
+        if not dragging then return end
+        local d = pos - dragStart
+        local v = workspace.CurrentCamera.ViewportSize
+        local nx = math.max(0, math.min(winStart.X.Offset + d.X, v.X - 100))
+        local ny = math.max(0, math.min(winStart.Y.Offset + d.Y, v.Y - 40))
+        WIN.Position = UDim2.new(0, nx, 0, ny)
+    end
+    local function stopDrag() dragging = false; dragStart = nil; winStart = nil; TW(WIN_SCALE, TI_SOFT, {Scale=1}) end
+
+    connections[#connections + 1] = TB.InputBegan:Connect(function(inp, gp)
+        if gp or (inp.UserInputType ~= Enum.UserInputType.MouseButton1 and inp.UserInputType ~= Enum.UserInputType.Touch) then return end
+        if isOverUI(inp.Position.X, inp.Position.Y) then return end
+        startDrag(Vector2.new(inp.Position.X, inp.Position.Y))
+    end)
+    connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            updateDrag(Vector2.new(inp.Position.X, inp.Position.Y))
+        end
+    end)
+    connections[#connections + 1] = UIS.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            if dragging then stopDrag() end
+            if resizing then
+                resizing = false; activeHandle = nil; resizeStart = nil; resizeWinPos = nil; resizeWinSize = nil
+                TW(WIN_SCALE, TI_SOFT, {Scale=1})
+            end
+        end
+    end)
+
+    local cornerHandles = {
+        {name="TL", px=0, py=0, dx=-1, dy=-1}, {name="TR", px=1, py=0, dx=1, dy=-1},
+        {name="BL", px=0, py=1, dx=-1, dy=1}, {name="BR", px=1, py=1, dx=1, dy=1},
+    }
+    for _, h in ipairs(cornerHandles) do
+        local hf = mk("Frame", {Name="Rsz_"..h.name,
+            Size=UDim2.new(0, SET.RESIZE_EDGE, 0, SET.RESIZE_EDGE),
+            Position=UDim2.new(h.px, h.dx == 1 and -SET.RESIZE_EDGE or 0, h.py, h.dy == 1 and -SET.RESIZE_EDGE or 0),
+            BackgroundTransparency=1, ZIndex=10, Active=true}, WIN)
+        hf.InputBegan:Connect(function(inp, gp)
+            if gp then return end
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+                local px, py = inp.Position.X, inp.Position.Y
+                if pointInGui(CLOSE_BTN, px, py) or pointInGui(MINI_BTN, px, py) or pointInGui(TB, px, py) then return end
+                activeHandle = h; resizing = true
+                resizeStart = Vector2.new(inp.Position.X, inp.Position.Y)
+                resizeWinPos = WIN.Position; resizeWinSize = WIN.Size
+                TW(WIN_SCALE, TI_FAST, {Scale=1.015})
+            end
+        end)
+    end
+    local function updateResize(pos)
+        if not resizing or not activeHandle then return end
+        local d = pos - resizeStart
+        local vp = workspace.CurrentCamera.ViewportSize
+        local W, H = resizeWinSize.X.Offset, resizeWinSize.Y.Offset
+        local PX, PY = resizeWinPos.X.Offset, resizeWinPos.Y.Offset
+        local nW, nH, nPX, nPY = W, H, PX, PY
+        if activeHandle.dx == 1 then nW = math.min(math.max(SET.MIN_W, W + d.X), vp.X - PX)
+        elseif activeHandle.dx == -1 then
+            local dw = math.min(d.X, W - SET.MIN_W); nW = W - dw; nPX = math.max(0, PX + dw)
+        end
+        if activeHandle.dy == 1 then nH = math.min(math.max(SET.MIN_H, H + d.Y), vp.Y - PY)
+        elseif activeHandle.dy == -1 then
+            local dh = math.min(d.Y, H - SET.MIN_H); nH = H - dh; nPY = math.max(0, PY + dh)
+        end
+        WIN.Size = UDim2.new(0, nW, 0, nH)
+        WIN.Position = UDim2.new(0, nPX, 0, nPY)
+    end
+    connections[#connections + 1] = UIS.InputChanged:Connect(function(inp)
+        if not resizing or not activeHandle then return end
+        if inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch then
+            updateResize(Vector2.new(inp.Position.X, inp.Position.Y))
+        end
+    end)
+
+    local startYPos = 60
+    local knownUIs = {"__DexRoot", "DarkDex", "F9Gui", "Orion", "Linoria", "Synapse", "ScriptWare"}
+    for _, guiName in ipairs(knownUIs) do
+        if PGui:FindFirstChild(guiName) or CoreGui:FindFirstChild(guiName) then startYPos = startYPos + 42 end
+    end
+    REOPEN_BTN = mk("TextButton", {Name="ReopenBtn", Text="", BackgroundColor3=C.F9BG, BackgroundTransparency=0,
+        Size=UDim2.new(0,110,0,30), Position=UDim2.new(0,8,0,startYPos),
+        Visible=false, BorderSizePixel=0, AutoButtonColor=false, ZIndex=200, ClipsDescendants=true}, GUI)
+    corner(REOPEN_BTN, 10); stroke(REOPEN_BTN, C.BLUE, 1.5)
+    local reopenIcon = mkIcon("code", 16, C.TXTW, REOPEN_BTN, true); reopenIcon.Position = UDim2.new(0, 8, 0.5, -8)
+    mk("TextLabel", {Text="EXTRACTOR", TextColor3=C.TXTW, Font=Enum.Font.GothamBold, TextSize=11,
+        BackgroundTransparency=1, Size=UDim2.new(1,-30,1,0), Position=UDim2.new(0,30,0,0),
+        TextXAlignment=Enum.TextXAlignment.Left, ZIndex=201}, REOPEN_BTN)
+    local reopenScale = Instance.new("UIScale", REOPEN_BTN)
+    TweenService:Create(reopenScale, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Scale=1.07}):Play()
+    REOPEN_BTN.MouseEnter:Connect(function() if REOPEN_BTN.Parent then TW(REOPEN_BTN, TI_FAST, {BackgroundTransparency=0.25}) end end)
+    REOPEN_BTN.MouseLeave:Connect(function() if REOPEN_BTN.Parent then TW(REOPEN_BTN, TI_SOFT, {BackgroundTransparency=0}) end end)
+
+    local CLOSED = false
+    local function showWindow()
+        REOPEN_BTN.Visible = false; WIN.Visible = true; WIN_SCALE.Scale = 0.9; isOpen = true
+        TW(WIN_SCALE, TI_POP, {Scale=1})
+    end
+    local function hideWindow()
+        isOpen = false
+        local t = TWc(WIN_SCALE, TI_FAST, {Scale=0.9})
+        t.Completed:Connect(function()
+            if WIN and WIN.Parent and not CLOSED then WIN.Visible = false; WIN_SCALE.Scale = 1; REOPEN_BTN.Visible = true end
+        end)
+    end
+
+    local function shutdown()
+        if CLOSED then return end
+        CLOSED = true
+        dragging = false; resizing = false; activeHandle = nil
+        dragStart, winStart = nil, nil; resizeStart, resizeWinPos, resizeWinSize = nil, nil, nil
+        for _, conn in ipairs(connections) do pcall(function() conn:Disconnect() end) end
+        pcall(function() if GUI and GUI.Parent then GUI:Destroy() end end)
+    end
+
+    CLOSE_BTN.MouseButton1Click:Connect(function()
+        local t = TWc(WIN_SCALE, TI_FAST, {Scale=0.85})
+        t.Completed:Connect(shutdown)
+    end)
+    MINI_BTN.MouseButton1Click:Connect(function() if CLOSED then return end; hideWindow() end)
+    REOPEN_BTN.MouseButton1Click:Connect(function() if CLOSED then return end; showWindow() end)
+    connections[#connections + 1] = UIS.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        if inp.KeyCode == Enum.KeyCode.RightShift then
+            if not CLOSED and WIN and WIN.Parent then
+                if WIN.Visible then hideWindow() else showWindow() end
+            end
+        end
+    end)
+
+    UI.Colors = C
+    UI.InputHistory = history
+end
+
+function UI.SetOnRun(cb)
+    onRunCallback = cb
+end
+
+function UI.SetRunningState(running)
+    execRunning = running
+    local inputStroke = INPUT.Parent:FindFirstChildOfClass("UIStroke")
+    local conStroke = CON_SCR.Parent:FindFirstChildOfClass("UIStroke")
+    local runStroke = RUN_BTN:FindFirstChildOfClass("UIStroke")
+    local runIco = RUN_BTN:FindFirstChild("Frame")
+    local runLbl = RUN_BTN:FindFirstChildOfClass("TextLabel")
+    
+    if running then
+        if inputStroke then inputStroke.Color = Color3.fromRGB(255, 50, 50); inputStroke.Thickness = 2 end
+        if conStroke then conStroke.Color = Color3.fromRGB(255, 50, 50); conStroke.Thickness = 1.5 end
+        INPUT.TextEditable = false
+        
+        RUN_BTN.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
+        if runStroke then runStroke.Color = Color3.fromRGB(255, 50, 50) end
+        if runLbl then runLbl.Text = "STOP" end
+        if runIco then applyIcon(runIco, "square", C.TXTW, true) end
+    else
+        if inputStroke then inputStroke.Color = C.CON_BRD; inputStroke.Thickness = 1 end
+        if conStroke then conStroke.Color = C.CON_BRD; conStroke.Thickness = 1 end
+        
+        INPUT.TextEditable = true
+        RUN_BTN.BackgroundColor3 = Color3.fromRGB(20,80,34)
+        if runStroke then runStroke.Color = C.GREEN end
+        if runLbl then runLbl.Text = "RUN" end
+        if runIco then applyIcon(runIco, "play", C.TXTW, true) end
+    end
+end
+
+function UI.IsRunning()
+    return execRunning
+end
+
+function UI.EnableShield()
+    if shieldIco then shieldIco.Visible = true end
+end
+
+function UI.GetConsole()
+    return CON_SCR
+end
+
+function UI.ClearConsole()
+    for _, c in ipairs(CON_SCR:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+end
+
+function UI.ExtractURL(input)
+    if type(input) ~= "string" then return nil end
+    input = input:match("^%s*(.-)%s*$")
+    if input == "" then return nil end
+    local u = input:match("^(https?://%S+)$"); if u then return u end
+    u = input:match("[Hh]ttp[Gg]et%s*%(?%s*[\"']([^\"']+)[\"']"); if u then return u end
+    u = input:match("[Hh]ttp[Gg]et%s*%(?%s*%[=*%[([^%]]+)%]=*%]"); if u then return u end
+    u = input:match("[Hh]ttp[Gg]et[Aa]sync%s*%(?%s*[\"']([^\"']+)[\"']"); if u then return u end
+    u = input:match("[Uu]rl%s*=%s*[\"']([^\"']+)[\"']"); if u then return u end
+    u = input:match("(https?://[^%s\"'%)%]]+)"); if u then return u end
+    return nil
+end
+
+return UI
