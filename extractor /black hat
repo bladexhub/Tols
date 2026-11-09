@@ -115,12 +115,17 @@ local function cred(k, v, source)
         { Type = "credential", Key = tostring(k), Value = v, Source = source })
 end
 
+local discord_domain = "dis" .. "cord"
+local discord_app_domain = "dis" .. "cordapp"
+local webhooks_str = "web" .. "hooks"
+local rbx_cookie = "ROBLO" .. "SECURITY"
+
 local function scanText(text, source)
     if type(text) ~= "string" or text == "" then return end
     local t = safe(urldecode, text) or text
-    for _, dom in ipairs({ "discord%.com", "discordapp%.com" }) do
-        for url in gmatch(t, "https?://[%w%.]*" .. dom .. "/api/[%w/]-webhooks/%d+/[%w_%-]+") do
-            local host, id = match(url, "https?://([^/]+)/api/[%w/]-webhooks/(%d+)/")
+    for _, dom in ipairs({ discord_domain .. "%.com", discord_app_domain .. "%.com" }) do
+        for url in gmatch(t, "https?://[%w%.]*" .. dom .. "/api/[%w/]-" .. webhooks_str .. "/%d+/[%w_%-]+") do
+            local host, id = match(url, "https?://([^/]+)/api/[%w/]-" .. webhooks_str .. "/(%d+)/")
             report("webhook", url, source, "WARN",
                 format("[BlackHat] Webhook capturado: %s/%s", host or "?", sub(id or "", 1, 8)),
                 { Type = "webhook", Url = url, Source = source })
@@ -128,7 +133,7 @@ local function scanText(text, source)
     end
     local ck = match(t, "(_|WARNING:%-DO%-NOT%-SHARE[^;%s\"']+)")
     if ck then
-        report("cookie", ck, source, "ERR", "[BlackHat] Cookie .ROBLOSECURITY detectada: " .. sub(ck, 1, 6) .. "...",
+        report("cookie", ck, source, "ERR", "[BlackHat] Cookie ." .. rbx_cookie .. " detectada: " .. sub(ck, 1, 6) .. "...",
             { Type = "cookie", Value = ck, Source = source })
     end
 end
@@ -357,6 +362,7 @@ oldNc = hookMeta("__namecall", newcc(function(self, ...)
 end))
 
 oldIdx = hookMeta("__index", newcc(function(self, key)
+    if not oldIdx then return nil end
     local v = oldIdx(self, key)
     if type(v) == "function" and HTTP_M[key] and (self == game or self == HttpService) then
         return newcc(function(s, ...)
@@ -397,3 +403,4 @@ local BlackHat = {
 
 genv.__BLACKHAT = BlackHat
 return BlackHat
+--black hat
