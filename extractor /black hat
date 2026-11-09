@@ -1,177 +1,158 @@
---BLACKHAT
-return function(EXTRACT_DIR, HttpService)
-    local genv = (getgenv and getgenv()) or _G
-    if genv.__BLACKHAT then return genv.__BLACKHAT end
+--BLACK HAT
+local HttpService = game:GetService("HttpService")
+local genv = (getgenv and getgenv()) or _G
 
-    local function rev(s) return s:reverse() end
-    local TARGET_DISCORD = rev("drocsid")
-    local TARGET_WEBHOOK = rev("koobeW")
-    local TARGET_COOKIE1 = rev("YTIRUCESOLBOR")
-    local TARGET_COOKIE2 = rev("GNINRAW_WARD")
+if genv.__BLACKHAT then 
+    return genv.__BLACKHAT 
+end
 
-    local Findings, Seen, Buffer, Subs = {}, {}, {}, {}
-    local wrapped = setmetatable({}, { __mode = "k" })
+local Findings, Seen, Buffer, Subs = {}, {}, {}, {}
+local wrapped = setmetatable({}, { __mode = "k" })
+
+local function emit(level, msg, data)
+    local ev = { Level = level, Message = msg, Data = data }
+    if #Subs == 0 then
+        Buffer[#Buffer + 1] = ev
+        if #Buffer > 200 then table.remove(Buffer, 1) end
+        return
+    end
+    for _, cb in ipairs(Subs) do 
+        task.defer(function() pcall(cb, ev) end) 
+    end
+end
+
+local function report(kind, value, source, level, msg)
+    local key = kind .. tostring(value)
+    if Seen[key] then return end
+    Seen[key] = true
     
-    local LOG_DIR = EXTRACT_DIR .. "/blackhat_logs"
-    local LOG_FILE = LOG_DIR .. "/eventos_blackhat.txt"
+    table.insert(Findings, { Type = kind, Value = value, Source = source, Time = os.time() })
     
-    pcall(makefolder, LOG_DIR)
+    emit(level, msg, { Type = kind, Value = value, Source = source })
+end
 
-    local function emit(level, msg, data)
-        local ev = { Level = level, Message = msg, Data = data }
-        if #Subs == 0 then
-            Buffer[#Buffer + 1] = ev
-            if #Buffer > 200 then table.remove(Buffer, 1) end
-            return
-        end
-        for _, cb in ipairs(Subs) do task.defer(function() pcall(cb, ev) end) end
+local function analyzeContent(text, source)
+    if type(text) ~= "string" or #text < 5 then return end
+    
+    for url in string.gmatch(text, "https?://discord%.com/api/webhooks/[%d]+/[%w%-_]+") do
+        report("Webhook", url, source, "WARN", 
+            string.format("[Black Hat] Webhook Detectado\n   Origen: %s\n   URL: %s", source, url)
+        )
     end
 
-    local function report(kind, value, source, level, msg)
-        local key = kind .. tostring(value)
-        if Seen[key] then return end
-        Seen[key] = true
-        
-        table.insert(Findings, { Type = kind, Value = value, Source = source, Time = os.time() })
-        
-        task.spawn(function()
-            local timestamp = os.date("[%Y-%m-%d %H:%M:%S]")
-            local logText = string.format("%s [%s] Fuente: %s\n>> Valor: %s\n\n", timestamp, kind, source, value)
-            
-            if appendfile then
-                pcall(appendfile, LOG_FILE, logText)
-            elseif writefile then
-                local old = ""
-                if isfile and isfile(LOG_FILE) then old = readfile(LOG_FILE) end
-                pcall(writefile, LOG_FILE, old .. logText)
-            end
-        end)
-        
-        emit(level, msg, { Type = kind, Value = value, Source = source })
-    end
-
-    local function analyzeContent(text, source)
-        if type(text) ~= "string" or #text < 5 then return end
-        
-        if text:find(TARGET_DISCORD) and text:find(TARGET_WEBHOOK) then
-            for url in string.gmatch(text, "https?://[%w%.]*" .. TARGET_DISCORD .. "%.com/api/webhooks/[%w/%-_]+") do
-                report("Webhook", url, source, "WARN", "[BlackHat] ¡Webhook interceptado!")
-            end
-        end
-
-        if text:find(TARGET_COOKIE1) or (text:find(TARGET_COOKIE2) and #text > 100) then
-            local cookie = text:match("(" .. TARGET_COOKIE1 .. "[%w%%%+%=%_%-%.]+)")
-            if not cookie then cookie = text:match(TARGET_COOKIE1 .. "=([^;%s\"']+)") end
-            if cookie then
-                report("Cookie", cookie, source, "ERR", "[BlackHat] ¡Cookie interceptada!")
-            end
-        end
-
-        for token in string.gmatch(text, "([a-zA-Z0-9_%-%.]+%.[a-zA-Z0-9_%-%.]+%.[a-zA-Z0-9_%-%.]+)") do
-            if #token > 50 and token:find("%.") then
-                report("API Token", token, source, "WARN", "[BlackHat] ¡Token de API interceptado!")
-            end
+    for token in string.gmatch(text, "([a-zA-Z0-9_%-%.]+%.[a-zA-Z0-9_%-%.]+%.[a-zA-Z0-9_%-%.]+)") do
+        if #token > 50 and token:find("%.") then
+            local short_val = token:sub(1, 20) .. "..." .. token:sub(-10)
+            report("API Token", token, source, "WARN", 
+                string.format("[Black Hat] Token API Detectado\n   Origen: %s\n   Valor: %s", source, short_val)
+            )
         end
     end
+end
 
-    local function processRequest(source, url, body, headers)
-        task.spawn(function()
-            if type(url) == "string" then analyzeContent(url, source) end
-            if type(body) == "string" then
-                analyzeContent(body, source)
-                pcall(function()
-                    local data = HttpService:JSONDecode(body)
-                    if type(data) == "table" then
-                        for k, v in pairs(data) do
-                            if type(k) == "string" and (k:lower():find("token") or k:lower():find("pass") or k:lower():find("key") or k:lower():find("cookie")) then
-                                report("Credencial", k .. "=" .. tostring(v), source, "WARN", "[BlackHat] Credencial interceptada: " .. k)
-                            end
+local function processRequest(source, url, body, headers)
+    task.spawn(function()
+        if type(url) == "string" then analyzeContent(url, source) end
+        
+        if type(body) == "string" then
+            analyzeContent(body, source)
+            pcall(function()
+                local data = HttpService:JSONDecode(body)
+                if type(data) == "table" then
+                    for k, v in pairs(data) do
+                        if type(k) == "string" and (k:lower():find("token") or k:lower():find("pass") or k:lower():find("key")) then
+                            report("Credencial", k .. "=" .. tostring(v), source, "WARN", 
+                                string.format("[Black Hat] Credencial Detectada\n   Origen: %s\n   Clave: %s", source, k)
+                            )
                         end
                     end
-                end)
-            end
-            if type(headers) == "table" then
-                for k, v in pairs(headers) do
-                    local lk = tostring(k):lower()
-                    if lk:find("auth") or lk:find("cookie") or lk:find("token") then
-                        report("Header", k .. ": " .. tostring(v), source, "WARN", "[BlackHat] Header sensible: " .. k)
-                    end
-                end
-            end
-        end)
-    end
-
-    local function wrapFunction(name, orig)
-        return newcclosure(function(opts, ...)
-            pcall(function()
-                if type(opts) == "table" then
-                    local u = opts.Url or opts.url
-                    local b = opts.Body or opts.body
-                    local h = opts.Headers or opts.headers
-                    processRequest(name, u, b, h)
                 end
             end)
-            return orig(opts, ...)
-        end)
-    end
-
-    for _, name in ipairs({"request", "http_request", "syn.request", "http.request"}) do
-        local f = genv[name]
-        if type(f) == "function" and not wrapped[f] then
-            local w = wrapFunction(name, f)
-            genv[name] = w
-            wrapped[w] = true
         end
-    end
-
-    local HTTP_METHODS = {
-        HttpGet = true, HttpGetAsync = true, HttpPost = true, HttpPostAsync = true,
-        GetAsync = true, PostAsync = true, RequestAsync = true
-    }
-
-    if hookmetamethod then
-        local oldNamecall
-        pcall(function()
-            oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-                local method = getnamecallmethod()
-                if HTTP_METHODS[method] and (self == game or self == HttpService) then
-                    local args = {...}
-                    local url, body, headers
-                    if method == "RequestAsync" then
-                        local req = args[1]
-                        if type(req) == "table" then
-                            url = req.Url or req.url
-                            body = req.Body or req.body
-                            headers = req.Headers or req.headers
-                        end
-                    elseif method:find("Post") then
-                        url, body = args[1], args[2]
-                    else
-                        url = args[1]
-                    end
-                    processRequest("game:" .. method, url, body, headers)
+        
+        if type(headers) == "table" then
+            for k, v in pairs(headers) do
+                local lk = tostring(k):lower()
+                if lk:find("auth") or lk:find("token") then
+                    report("Header", k .. ": " .. tostring(v), source, "WARN", 
+                        string.format("[Black Hat] Header Sensible\n   Origen: %s\n   Header: %s", source, k)
+                    )
                 end
-                return oldNamecall(self, ...)
-            end))
-        end)
-    end
-
-    local BlackHat = {
-        Version = "1.3",
-        OnLog = function(cb)
-            if type(cb) ~= "function" then return function() end end
-            table.insert(Subs, cb)
-            if #Buffer > 0 then
-                local pending = Buffer
-                Buffer = {}
-                for _, ev in ipairs(pending) do task.defer(function() pcall(cb, ev) end) end
             end
-            return function() end
-        end,
-        GetFindings = function() return Findings end,
-        Clear = function() Findings, Seen, Buffer = {}, {}, {} end,
-    }
-
-    genv.__BLACKHAT = BlackHat
-    return BlackHat
+        end
+    end)
 end
+
+local function wrapFunction(name, orig)
+    return newcclosure(function(opts, ...)
+        pcall(function()
+            if type(opts) == "table" then
+                local u = opts.Url or opts.url
+                local b = opts.Body or opts.body
+                local h = opts.Headers or opts.headers
+                processRequest(name, u, b, h)
+            end
+        end)
+        return orig(opts, ...)
+    end)
+end
+
+for _, name in ipairs({"request", "http_request", "syn.request", "http.request"}) do
+    local f = genv[name]
+    if type(f) == "function" and not wrapped[f] then
+        local w = wrapFunction(name, f)
+        genv[name] = w
+        wrapped[w] = true
+    end
+end
+
+local HTTP_METHODS = {
+    HttpGet = true, HttpGetAsync = true, HttpPost = true, HttpPostAsync = true,
+    GetAsync = true, PostAsync = true, RequestAsync = true
+}
+
+if hookmetamethod then
+    local oldNamecall
+    pcall(function()
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if HTTP_METHODS[method] and (self == game or self == HttpService) then
+                local args = {...}
+                local url, body, headers
+                if method == "RequestAsync" then
+                    local req = args[1]
+                    if type(req) == "table" then
+                        url = req.Url or req.url
+                        body = req.Body or req.body
+                        headers = req.Headers or req.headers
+                    end
+                elseif method:find("Post") then
+                    url, body = args[1], args[2]
+                else
+                    url = args[1]
+                end
+                processRequest("game:" .. method, url, body, headers)
+            end
+            return oldNamecall(self, ...)
+        end))
+    end)
+end
+
+local BlackHat = {
+    Version = "1.5",
+    OnLog = function(cb)
+        if type(cb) ~= "function" then return function() end end
+        table.insert(Subs, cb)
+        if #Buffer > 0 then
+            local pending = Buffer
+            Buffer = {}
+            for _, ev in ipairs(pending) do task.defer(function() pcall(cb, ev) end) end
+        end
+        return function() end
+    end,
+    GetFindings = function() return Findings end,
+    Clear = function() Findings, Seen, Buffer = {}, {}, {} end,
+}
+
+genv.__BLACKHAT = BlackHat
+return BlackHat
