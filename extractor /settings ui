@@ -1,0 +1,108 @@
+return function(mk, corner, stroke, mkIcon, TW, TI_FAST, TI_SOFT, C, ICO, parentGui, initX, initY, saveSettings, clearBySource, clearQueueBySource, loadRedHat, loadBlackHat, EXTRACT_DIR, HttpService)
+    
+    local SETTINGS_FRAME = mk("Frame", {Size=UDim2.new(0, 280, 0, 210), Position=UDim2.new(0, math.max(10, initX - 290), 0, initY),
+        BackgroundColor3=C.WIN, BorderSizePixel=0, ZIndex=100, Visible=false, ClipsDescendants=true}, parentGui)
+    corner(SETTINGS_FRAME, 8); stroke(SETTINGS_FRAME, C.DIV, 1)
+
+    local settingsTitle = mk("TextLabel", {Text="Ajustes", TextColor3=C.TXTW, Font=Enum.Font.GothamBold,
+        TextSize=12, BackgroundTransparency=1, Size=UDim2.new(1,0,0,30), Position=UDim2.new(0,0,0,0), ZIndex=101}, SETTINGS_FRAME)
+    mk("Frame", {Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,1,-1), BackgroundColor3=C.DIV, BorderSizePixel=0, ZIndex=101}, settingsTitle)
+
+    local setCloseBtn = mk("TextButton", {Text="", BackgroundColor3=Color3.fromRGB(60, 60, 60), Size=UDim2.new(0, 20, 0, 20),
+        Position=UDim2.new(1, -25, 0, 5), BorderSizePixel=0, ZIndex=102, AutoButtonColor=false}, SETTINGS_FRAME)
+    corner(setCloseBtn, 4)
+    local setCloseIco = mkIcon("x", 12, C.TXTW, setCloseBtn, true); setCloseIco.Position = UDim2.new(0.5, -6, 0.5, -6)
+    setCloseBtn.MouseButton1Click:Connect(function() SETTINGS_FRAME.Visible = false end)
+
+    local function createSwitch(name, iconName, yPos, getState, setState)
+        local row = mk("Frame", {Size=UDim2.new(1,-20,0,34), Position=UDim2.new(0,10,0,yPos), BackgroundTransparency=1, ZIndex=101}, SETTINGS_FRAME)
+        
+        local ic = mkIcon(iconName, 14, C.CON_TXT, row)
+        ic.Position = UDim2.new(0, 5, 0.5, -7)
+        
+        local lbl = mk("TextLabel", {Text=name, TextColor3=C.CON_TXT, Font=Enum.Font.Code, TextSize=11,
+            BackgroundTransparency=1, Size=UDim2.new(1,-60,1,0), Position=UDim2.new(0,25,0,0), TextXAlignment=Enum.TextXAlignment.Left, ZIndex=102}, row)
+        
+        local track = mk("Frame", {Size=UDim2.new(0, 36, 0, 18), Position=UDim2.new(1,-45,0.5,-9),
+            BackgroundColor3=Color3.fromRGB(60,60,60), BorderSizePixel=0, ZIndex=102}, row)
+        corner(track, 9)
+        
+        local knob = mk("Frame", {Size=UDim2.new(0, 14, 0, 14), Position=UDim2.new(0, 2, 0.5, -7),
+            BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0, ZIndex=103}, track)
+        corner(knob, 7)
+
+        local function updateVisual(state)
+            if state then
+                TW(track, TI_FAST, {BackgroundColor3=Color3.fromRGB(20, 150, 50)})
+                TW(knob, TI_FAST, {Position=UDim2.new(1, -16, 0.5, -7)})
+            else
+                TW(track, TI_FAST, {BackgroundColor3=Color3.fromRGB(60, 60, 60)})
+                TW(knob, TI_FAST, {Position=UDim2.new(0, 2, 0.5, -7)})
+            end
+        end
+
+        local clickArea = mk("TextButton", {Text="", Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, ZIndex=104}, track)
+        clickArea.MouseButton1Click:Connect(function()
+            local newState = not getState()
+            setState(newState)
+            updateVisual(newState)
+            saveSettings()
+
+            if not newState then
+                local cat = nil
+                if name == "Red Hat" then cat = "red_hat" elseif name == "Black Hat" then cat = "black_hat" end
+                local C_WARN = C.CON_WARN or Color3.fromRGB(255, 200, 50)
+                -- Usamos una variable global o esperamos que addLine sea accesible
+                if getgenv().BladexAddLine then 
+                    getgenv().BladexAddLine(name .. " desactivado", C_WARN, "warn", iconName, true, cat and (cat .. "_status") or nil)
+                end
+            end
+        end)
+        
+        updateVisual(getState())
+    end
+
+    createSwitch("Red Hat", ICO.red_hat, 45, 
+        function() return getgenv().BladexRedHatEnabled end,
+        function(v)
+            getgenv().BladexRedHatEnabled = v
+            clearBySource("red_hat");        clearQueueBySource("red_hat")
+            clearBySource("red_hat_status"); clearQueueBySource("red_hat_status")
+            if v then task.spawn(loadRedHat) end
+        end
+    )
+
+    createSwitch("Black Hat", ICO.black_hat, 85, 
+        function() return getgenv().BladexBlackHatEnabled end,
+        function(v)
+            getgenv().BladexBlackHatEnabled = v
+            clearBySource("black_hat");        clearQueueBySource("black_hat")
+            clearBySource("black_hat_status"); clearQueueBySource("black_hat_status")
+            if v then
+                task.spawn(loadBlackHat)
+            else
+                local guard = getgenv()._BladexBlackHatGuard
+                if guard and guard.GetFindings then
+                    local findings = guard.GetFindings()
+                    if type(findings) == "table" and #findings > 0 then
+                        local saveDir = EXTRACT_DIR .. "/blackhat"
+                        pcall(makefolder, saveDir)
+                        local file = saveDir .. "/findings_" .. tostring(os.time()) .. ".json"
+                        local okW = pcall(writefile, file, HttpService:JSONEncode(findings))
+                        if okW and getgenv().BladexAddLine then
+                            getgenv().BladexAddLine("Black Hat: " .. tostring(#findings) .. " hallazgo(s) guardado(s) -> " .. file,
+                                C.CON_SYS, "info", ICO.black_hat, true, "black_hat_status")
+                        end
+                    end
+                end
+            end
+        end
+    )
+
+    createSwitch("Animaciones", ICO.animations, 125, 
+        function() return getgenv().BladexAnimationsEnabled end,
+        function(v) getgenv().BladexAnimationsEnabled = v end
+    )
+
+    return SETTINGS_FRAME
+end
