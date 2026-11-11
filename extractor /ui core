@@ -9,7 +9,6 @@ local LP = Players.LocalPlayer
 local PGui = LP:WaitForChild("PlayerGui", 10)
 
 local C, getIcon, mkIcon
-
 local SET = { DEFAULT_W=620, DEFAULT_H=420, MIN_W=360, MIN_H=240, RESIZE_EDGE=26 }
 
 local TI_FAST = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -39,7 +38,6 @@ local function vlist(p, sp)
     l.Padding = UDim.new(0, sp or 0); l.Parent = p
 end
 
--- Función interna para actualizar iconos
 local function applyIcon(holder, name, color, keepColor)
     if not getIcon then return end
     local id = getIcon(name)
@@ -52,7 +50,7 @@ local function applyIcon(holder, name, color, keepColor)
     img.Size = UDim2.new(1, 0, 1, 0); img.Parent = holder
 end
 
-local GUI, WIN, WIN_SCALE, TB, CLOSE_BTN, MINI_BTN
+local GUI, WIN, WIN_SCALE, TB, CLOSE_BTN, MINI_BTN, LOGO_BTN
 local CON_SCR, INPUT, RUN_BTN, REOPEN_BTN, shieldIco, runIco, runLbl
 local isOpen, dragging, dragStart, winStart = true, false, nil, nil
 local resizing, activeHandle, resizeStart, resizeWinPos, resizeWinSize = false, nil, nil, nil, nil
@@ -95,8 +93,9 @@ function UI.Init(theme, getIconFn, mkIconFn)
     mk("Frame", {Size=UDim2.new(1,0,0,12), Position=UDim2.new(0,0,1,-12), BackgroundColor3=C.HDR2, BorderSizePixel=0, ZIndex=19}, TB)
     mk("Frame", {Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,1,-1), BackgroundColor3=C.DIV, BorderSizePixel=0, ZIndex=21}, TB)
 
-    local titleIco = mkIcon("bladex-hud-logo", 20, C.TXTW, TB, true)
-    titleIco.Position = UDim2.new(0, 10, 0.5, -10); titleIco.ZIndex = 21
+    LOGO_BTN = mk("TextButton", {Text="", BackgroundTransparency=1, Size=UDim2.new(0, 36, 0, 36), Position=UDim2.new(0, 0, 0, 0), ZIndex=22, AutoButtonColor=false}, TB)
+    local titleIco = mkIcon("bladex-hud-logo", 20, C.TXTW, LOGO_BTN, true)
+    titleIco.Position = UDim2.new(0.5, -10, 0.5, -10); titleIco.ZIndex = 21
 
     mk("TextLabel", {Text="BLADEX EXTRACTOR", TextColor3=C.TXTW, Font=Enum.Font.Gotham,
         TextSize=12, BackgroundTransparency=1, Size=UDim2.new(0,160,1,0),
@@ -173,7 +172,7 @@ function UI.Init(theme, getIconFn, mkIconFn)
         if enter and not execRunning and onRunCallback then
             local c = INPUT.Text; INPUT.Text = ""
             local ok, err = pcall(onRunCallback, c)
-            if not ok then print("Error Int: " .. tostring(err)) end
+            if not ok then warn("Error Int: " .. tostring(err)) end
         end
     end)
 
@@ -204,7 +203,7 @@ function UI.Init(theme, getIconFn, mkIconFn)
         return px >= ap.X and px <= ap.X + as.X and py >= ap.Y and py <= ap.Y + as.Y
     end
     local function isOverUI(px, py)
-        return pointInGui(CLOSE_BTN, px, py) or pointInGui(MINI_BTN, px, py)
+        return pointInGui(CLOSE_BTN, px, py) or pointInGui(MINI_BTN, px, py) or pointInGui(LOGO_BTN, px, py)
             or pointInGui(INPUT_ROW, px, py) or pointInGui(INPUT, px, py)
             or pointInGui(RUN_BTN, px, py) or pointInGui(CON_SCR, px, py)
     end
@@ -341,13 +340,10 @@ function UI.Init(theme, getIconFn, mkIconFn)
     end)
 
     UI.Colors = C
-    UI.InputHistory = history
+    UI.LogoButton = LOGO_BTN
 end
 
-function UI.SetOnRun(cb)
-    onRunCallback = cb
-end
-
+function UI.SetOnRun(cb) onRunCallback = cb end
 function UI.SetRunningState(running)
     execRunning = running
     local inputStroke = INPUT.Parent:FindFirstChildOfClass("UIStroke")
@@ -366,7 +362,6 @@ function UI.SetRunningState(running)
     else
         if inputStroke then inputStroke.Color = C.CON_BRD; inputStroke.Thickness = 1 end
         if conStroke then conStroke.Color = C.CON_BRD; conStroke.Thickness = 1 end
-        
         INPUT.TextEditable = true
         RUN_BTN.BackgroundColor3 = Color3.fromRGB(20,80,34)
         if runStroke then runStroke.Color = C.GREEN end
@@ -375,24 +370,14 @@ function UI.SetRunningState(running)
     end
 end
 
-function UI.IsRunning()
-    return execRunning
-end
-
-function UI.EnableShield()
-    if shieldIco then shieldIco.Visible = true end
-end
-
-function UI.GetConsole()
-    return CON_SCR
-end
-
+function UI.IsRunning() return execRunning end
+function UI.EnableShield() if shieldIco then shieldIco.Visible = true end end
+function UI.GetConsole() return CON_SCR end
 function UI.ClearConsole()
     for _, c in ipairs(CON_SCR:GetChildren()) do
         if c:IsA("Frame") then c:Destroy() end
     end
 end
-
 function UI.ExtractURL(input)
     if type(input) ~= "string" then return nil end
     input = input:match("^%s*(.-)%s*$")
