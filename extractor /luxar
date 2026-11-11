@@ -1,1 +1,54 @@
 
+return function(input)
+    local g,p,t,s=game,pcall,type,string
+    local x=(bit32 and bit32.bxor) or (bit and bit.bxor)
+    local sf,tc=string.format,table.concat
+    local gv=(getgenv and getgenv()) or {}
+    local pg=g:GetService("Players")
+    local pl=pg.LocalPlayer
+    if not pl then for _=1,200 do pl=pg.LocalPlayer if pl then break end if task and task.wait then task.wait(0.05) else wait(0.05) end end end
+    local RN=(pl and pl.Name) or ""
+    local RID=(pl and pl.UserId) or 0
+    local HW=""
+    do local a,b=p(function() if gethwid then return gethwid() end return g:GetService("RbxAnalyticsService"):GetClientId() end) if a and t(b)=="string" then HW=b:gsub("[^%w%-]","") end end
+    
+    -- Contamos los marcadores para dar un falso positivo de bypass y que nos devuelva el código
+    local B=0
+    for _,k in ipairs({"__LG_BYPASS","LG_DUMPS","LG_SAVE","LG_DUMP","__LG_GATE","__LG","__dumper","__deobf","__loadstring_hook","__hook_ls"}) do if gv[k]~=nil then B=B+1 end end
+    
+    local raw=RN.."|"..tostring(RID).."|"..HW
+    local sm=0 for i=1,#raw do sm=(sm+raw:byte(i))%1000000007 end
+    local q=((1560*1009)%1000000007+(sm*7919)%1000000007+B*48271+(B>0 and 11 or 0))%1000000007
+    local d={}
+    if x then for i=1,#raw do d[i]=sf("%02x", x(raw:byte(i),(1560*131+(i-1)*17+59)%256)) end end
+    d=tc(d)
+    
+    -- Limpiamos la URL base por si el usuario ingresa los parámetros
+    local baseUrl = input:match("^([^?]+)")
+    if not baseUrl then baseUrl = input end
+    
+    local targetUrl = baseUrl .. "?q=" .. q .. "&d=" .. d
+    
+    print("[Luxar Extractor] Conectando al servidor...")
+    local ok, r = pcall(function() return g:HttpGet(targetUrl) end)
+    
+    if not ok or type(r) ~= "string" or r == "" then
+        print("[Luxar Extractor] Error: No se pudo descargar el payload. Posible bloqueo del servidor.")
+        return
+    end
+    
+    local host = targetUrl:match("^%a+://([^/%?#:]+)") or "luxar"
+    local dir = getgenv().EXTRACT_DIR .. "/" .. host
+    pcall(makefolder, dir)
+    
+    local fname = "luxar_payload_" .. tostring(os.time()) .. ".lua"
+    local path = dir .. "/" .. fname
+    
+    if writefile then
+        writefile(path, r)
+        print("[Luxar Extractor] ¡Código extraído con éxito!")
+        print("Guardado en: " .. path)
+    else
+        print("[Luxar Extractor] Error: writefile no está disponible en tu ejecutor.")
+    end
+end
