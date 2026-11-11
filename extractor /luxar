@@ -27,7 +27,6 @@ return function(input)
     local targetUrl = baseUrl .. "?q=" .. q .. "&d=" .. d
     
     print("[Luxar Extractor] Conectando al servidor...")
-    print("[Luxar Extractor] URL: " .. targetUrl)
     
     local req = (syn and syn.request) or (http and http.request) or http_request or request
     local ok, res
@@ -42,6 +41,16 @@ return function(input)
         ok, res = pcall(function() return { Body = g:HttpGet(targetUrl), StatusCode = 200 } end)
     end
     
+    -- Si falla y es un enlace RAW, intentamos sin el hash
+    if (not ok or not res or res.StatusCode ~= 200) and baseUrl:find("/raw/") then
+        print("[Luxar Extractor] Reintentando descarga directa (Modo RAW)...")
+        if req then
+            ok, res = pcall(req, { Url = baseUrl, Method = "GET" })
+        else
+            ok, res = pcall(function() return { Body = g:HttpGet(baseUrl), StatusCode = 200 } end)
+        end
+    end
+
     if not ok or not res then
         print("[Luxar Extractor] Error de conexión: " .. tostring(res))
         return
@@ -50,13 +59,13 @@ return function(input)
     print("[Luxar Extractor] Status HTTP: " .. tostring(res.StatusCode))
     
     if res.StatusCode ~= 200 then
-        print("[Luxar Extractor] El servidor respondió con error. Cuerpo: " .. tostring(res.Body):sub(1, 200))
+        print("[Luxar Extractor] Error del servidor. Detalles: " .. tostring(res.Body):sub(1, 100))
         return
     end
     
     local body = res.Body
     if not body or body == "" or body:find("<!DOCTYPE") or body:find("<html") then
-        print("[Luxar Extractor] La respuesta no es un script válido (posible bloqueo o mantenimiento).")
+        print("[Luxar Extractor] La respuesta no es un script válido.")
         return
     end
     
@@ -69,7 +78,8 @@ return function(input)
     
     if writefile then
         writefile(path, body)
-        print("[Luxar Extractor] ¡Código extraído con éxito! Guardado en: " .. path)
+        print("[Luxar Extractor] ¡Código extraído con éxito!")
+        print("Guardado en: " .. path)
     else
         print("[Luxar Extractor] Error: writefile no está disponible.")
     end
