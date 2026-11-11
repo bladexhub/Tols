@@ -1,19 +1,12 @@
 return function(msg)
     local lowerMsg = string.lower(msg)
     
-    -- Logs de Éxito
     if lowerMsg:find("guardado") or lowerMsg:find("completado") or lowerMsg:find("finalizado") or lowerMsg:find("exito") then
         return "ok", "check", "ok"
-        
-    -- Logs de Error
     elseif lowerMsg:find("error") or lowerMsg:find("fallo") or lowerMsg:find("failed") or lowerMsg:find("invalido") then
         return "err", "x", "err"
-        
-    -- Logs de Advertencia
     elseif lowerMsg:find("advertencia") or lowerMsg:find("warn") or lowerMsg:find("peligro") then
         return "warn", "alert-triangle", "warn"
-    
-    -- Logs Normales (Info)
     else
         return "info", "info", "sys"
     end
