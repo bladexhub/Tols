@@ -39,8 +39,21 @@ local function vlist(p, sp)
     l.Padding = UDim.new(0, sp or 0); l.Parent = p
 end
 
+-- Función interna para actualizar iconos
+local function applyIcon(holder, name, color, keepColor)
+    if not getIcon then return end
+    local id = getIcon(name)
+    if not id then return end
+    holder:ClearAllChildren()
+    local img = Instance.new("ImageLabel")
+    img.Image = id
+    img.ImageColor3 = keepColor and Color3.fromRGB(255,255,255) or (color or Color3.new(1,1,1))
+    img.BackgroundTransparency = 1; img.ScaleType = Enum.ScaleType.Fit
+    img.Size = UDim2.new(1, 0, 1, 0); img.Parent = holder
+end
+
 local GUI, WIN, WIN_SCALE, TB, CLOSE_BTN, MINI_BTN
-local CON_SCR, INPUT, RUN_BTN, REOPEN_BTN, shieldIco
+local CON_SCR, INPUT, RUN_BTN, REOPEN_BTN, shieldIco, runIco, runLbl
 local isOpen, dragging, dragStart, winStart = true, false, nil, nil
 local resizing, activeHandle, resizeStart, resizeWinPos, resizeWinSize = false, nil, nil, nil, nil
 local execRunning = false
@@ -147,8 +160,8 @@ function UI.Init(theme, getIconFn, mkIconFn)
         Position=UDim2.new(1,-70,0,0), ZIndex=15, ClipsDescendants=true}, INPUT_ROW)
     corner(RUN_BTN, 6); 
     local runStroke = stroke(RUN_BTN, C.GREEN, 1.2)
-    local runIco = mkIcon("play", 14, C.TXTW, RUN_BTN); runIco.Position = UDim2.new(0, 10, 0.5, -7)
-    local runLbl = mk("TextLabel", {Text="RUN", TextColor3=C.TXTW, Font=Enum.Font.GothamBold, TextSize=12,
+    runIco = mkIcon("play", 14, C.TXTW, RUN_BTN); runIco.Position = UDim2.new(0, 10, 0.5, -7)
+    runLbl = mk("TextLabel", {Text="RUN", TextColor3=C.TXTW, Font=Enum.Font.GothamBold, TextSize=12,
         BackgroundTransparency=1, Size=UDim2.new(1,-30,1,0), Position=UDim2.new(0,28,0,0),
         TextXAlignment=Enum.TextXAlignment.Left, ZIndex=16}, RUN_BTN)
 
@@ -340,8 +353,6 @@ function UI.SetRunningState(running)
     local inputStroke = INPUT.Parent:FindFirstChildOfClass("UIStroke")
     local conStroke = CON_SCR.Parent:FindFirstChildOfClass("UIStroke")
     local runStroke = RUN_BTN:FindFirstChildOfClass("UIStroke")
-    local runIco = RUN_BTN:FindFirstChild("Frame")
-    local runLbl = RUN_BTN:FindFirstChildOfClass("TextLabel")
     
     if running then
         if inputStroke then inputStroke.Color = Color3.fromRGB(255, 50, 50); inputStroke.Thickness = 2 end
