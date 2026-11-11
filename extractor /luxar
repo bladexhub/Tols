@@ -21,14 +21,14 @@ return function(input)
     if x then for i=1,#raw do d[i]=sf("%02x", x(raw:byte(i),(1560*131+(i-1)*17+59)%256)) end end
     d=tc(d)
     
-    -- LIMPIEZA DE URL: Extrae solo el enlace, ignorando la función loadstring
+    -- LIMPIEZA DE URL: Extrae solo el enlace
     local cleanUrl = input:match("https?://[^\"']+") or input
     local baseUrl = cleanUrl:match("^([^?]+)") or cleanUrl
-    
     local targetUrl = baseUrl .. "?q=" .. q .. "&d=" .. d
     
     print("[Luxar Extractor] Conectando al servidor...")
     
+    -- FORZAMOS EL USO DE syn.request o request
     local req = (syn and syn.request) or (http and http.request) or http_request or request
     local ok, res
     
@@ -39,6 +39,8 @@ return function(input)
             Headers = { ["User-Agent"] = "Roblox/WinInet" }
         })
     else
+        -- Fallback de emergencia si no hay request
+        print("[Luxar Extractor] ADVERTENCIA: Tu ejecutor no soporta request. Intentando HttpGet...")
         ok, res = pcall(function() return { Body = g:HttpGet(targetUrl), StatusCode = 200 } end)
     end
     
