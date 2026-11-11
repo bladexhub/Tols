@@ -21,8 +21,9 @@ return function(input)
     if x then for i=1,#raw do d[i]=sf("%02x", x(raw:byte(i),(1560*131+(i-1)*17+59)%256)) end end
     d=tc(d)
     
-    local baseUrl = input:match("^([^?]+)")
-    if not baseUrl then baseUrl = input end
+    -- LIMPIEZA DE URL: Extrae solo el enlace, ignorando la función loadstring
+    local cleanUrl = input:match("https?://[^\"']+") or input
+    local baseUrl = cleanUrl:match("^([^?]+)") or cleanUrl
     
     local targetUrl = baseUrl .. "?q=" .. q .. "&d=" .. d
     
@@ -41,7 +42,6 @@ return function(input)
         ok, res = pcall(function() return { Body = g:HttpGet(targetUrl), StatusCode = 200 } end)
     end
     
-    -- Si falla y es un enlace RAW, intentamos sin el hash
     if (not ok or not res or res.StatusCode ~= 200) and baseUrl:find("/raw/") then
         print("[Luxar Extractor] Reintentando descarga directa (Modo RAW)...")
         if req then
