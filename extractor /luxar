@@ -1,88 +1,72 @@
 return function(input)
     local g,p,t,s=game,pcall,type,string
-    local x=(bit32 and bit32.bxor) or (bit and bit.bxor)
     local sf,tc=string.format,table.concat
-    local gv=(getgenv and getgenv()) or {}
     local pg=g:GetService("Players")
     local pl=pg.LocalPlayer
-    if not pl then for _=1,200 do pl=pg.LocalPlayer if pl then break end if task and task.wait then task.wait(0.05) else wait(0.05) end end end
+    if not pl then for _=1,200 do pl=pg.LocalPlayer if pl then break end task.wait(0.05) end end
     local RN=(pl and pl.Name) or ""
     local RID=(pl and pl.UserId) or 0
     local HW=""
     do local a,b=p(function() if gethwid then return gethwid() end return g:GetService("RbxAnalyticsService"):GetClientId() end) if a and t(b)=="string" then HW=b:gsub("[^%w%-]","") end end
     
-    local B=0
-    for _,k in ipairs({"__LG_BYPASS","LG_DUMPS","LG_SAVE","LG_DUMP","__LG_GATE","__LG","__dumper","__deobf","__loadstring_hook","__hook_ls"}) do if gv[k]~=nil then B=B+1 end end
-    
-    local raw=RN.."|"..tostring(RID).."|"..HW
-    local sm=0 for i=1,#raw do sm=(sm+raw:byte(i))%1000000007 end
-    local q=((1560*1009)%1000000007+(sm*7919)%1000000007+B*48271+(B>0 and 11 or 0))%1000000007
-    local d={}
-    if x then for i=1,#raw do d[i]=sf("%02x", x(raw:byte(i),(1560*131+(i-1)*17+59)%256)) end end
-    d=tc(d)
-    
-    -- LIMPIEZA DE URL: Extrae solo el enlace
-    local cleanUrl = input:match("https?://[^\"']+") or input
-    local baseUrl = cleanUrl:match("^([^?]+)") or cleanUrl
-    local targetUrl = baseUrl .. "?q=" .. q .. "&d=" .. d
-    
-    print("[Luxar Extractor] Conectando al servidor...")
-    
-    -- FORZAMOS EL USO DE syn.request o request
-    local req = (syn and syn.request) or (http and http.request) or http_request or request
-    local ok, res
-    
-    if req then
-        ok, res = pcall(req, {
-            Url = targetUrl,
-            Method = "GET",
-            Headers = { ["User-Agent"] = "Roblox/WinInet" }
-        })
-    else
-        -- Fallback de emergencia si no hay request
-        print("[Luxar Extractor] ADVERTENCIA: Tu ejecutor no soporta request. Intentando HttpGet...")
-        ok, res = pcall(function() return { Body = g:HttpGet(targetUrl), StatusCode = 200 } end)
-    end
-    
-    if (not ok or not res or res.StatusCode ~= 200) and baseUrl:find("/raw/") then
-        print("[Luxar Extractor] Reintentando descarga directa (Modo RAW)...")
-        if req then
-            ok, res = pcall(req, { Url = baseUrl, Method = "GET" })
-        else
-            ok, res = pcall(function() return { Body = g:HttpGet(baseUrl), StatusCode = 200 } end)
-        end
+    local function getHash(multiplier)
+        local raw=RN.."|"..tostring(RID).."|"..HW
+        local sm=0 for i=1,#raw do sm=(sm+raw:byte(i))%1000000007 end
+        local q=((multiplier*1009)%1000000007+(sm*7919)%1000000007)%1000000007
+        local d={}
+        local x=(bit32 and bit32.bxor) or (bit and bit.bxor)
+        if x then for i=1,#raw do d[i]=sf("%02x", x(raw:byte(i),(multiplier*131+(i-1)*17+59)%256)) end end
+        return q, tc(d)
     end
 
-    if not ok or not res then
-        print("[Luxar Extractor] Error de conexión: " .. tostring(res))
-        return
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+    
+    local function fetchUrl(url, multiplier)
+        local q, d = getHash(multiplier)
+        local targetUrl = url .. "?q=" .. q .. "&d=" .. d
+        print("[Luxar Extractor] Conectando a capa...")
+        
+        local ok, res
+        if req then
+            ok, res = pcall(req, {Url = targetUrl, Method = "GET", Headers = { ["User-Agent"] = "Roblox/WinInet" }})
+        else
+            ok, res = pcall(function() return { Body = g:HttpGet(targetUrl), StatusCode = 200 } end)
+        end
+        
+        if ok and res and res.StatusCode == 200 then return res.Body end
+        return nil
+    end
+
+    -- Capa 1: El enlace que el usuario ingresó
+    local cleanUrl = input:match("https?://[^\"']+") or input
+    local baseUrl = cleanUrl:match("^([^?]+)") or cleanUrl
+    
+    -- Obtenemos el multiplicador del input (por defecto 1560 si no se especifica)
+    local mult = tonumber(input:match("(%d+)%*1009")) or 1560
+    
+    local body = fetchUrl(baseUrl, mult)
+    if not body then print("[Luxar Extractor] Error en Capa 1") return end
+    
+    -- Comprobamos si es otra capa
+    local nextUrl = body:match("HttpGet%(\"([^\"]+)\"")
+    local nextMult = tonumber(body:match("(%d+)%*1009"))
+    
+    if nextUrl and nextMult then
+        print("[Luxar Extractor] Capa adicional detectada. Extrayendo...")
+        -- Limpiamos la URL de la siguiente capa
+        local nextBase = nextUrl:match("^([^?]+)") or nextUrl
+        body = fetchUrl(nextBase, nextMult)
     end
     
-    print("[Luxar Extractor] Status HTTP: " .. tostring(res.StatusCode))
+    if not body then print("[Luxar Extractor] Error en capa final") return end
     
-    if res.StatusCode ~= 200 then
-        print("[Luxar Extractor] Error del servidor. Detalles: " .. tostring(res.Body):sub(1, 100))
-        return
-    end
-    
-    local body = res.Body
-    if not body or body == "" or body:find("<!DOCTYPE") or body:find("<html") then
-        print("[Luxar Extractor] La respuesta no es un script válido.")
-        return
-    end
-    
-    local host = targetUrl:match("^%a+://([^/%?#:]+)") or "luxar"
+    local host = baseUrl:match("^%a+://([^/%?#:]+)") or "luxar"
     local dir = getgenv().EXTRACT_DIR .. "/" .. host
     pcall(makefolder, dir)
-    
-    local fname = "luxar_payload_" .. tostring(os.time()) .. ".lua"
-    local path = dir .. "/" .. fname
+    local path = dir .. "/luxar_final_" .. tostring(os.time()) .. ".lua"
     
     if writefile then
         writefile(path, body)
-        print("[Luxar Extractor] ¡Código extraído con éxito!")
-        print("Guardado en: " .. path)
-    else
-        print("[Luxar Extractor] Error: writefile no está disponible.")
+        print("[Luxar Extractor] ¡Script Final Extraído! Guardado en: " .. path)
     end
 end
