@@ -1,72 +1,138 @@
-return function(input)
-    local g,p,t,s=game,pcall,type,string
-    local sf,tc=string.format,table.concat
-    local pg=g:GetService("Players")
-    local pl=pg.LocalPlayer
-    if not pl then for _=1,200 do pl=pg.LocalPlayer if pl then break end task.wait(0.05) end end
-    local RN=(pl and pl.Name) or ""
-    local RID=(pl and pl.UserId) or 0
-    local HW=""
-    do local a,b=p(function() if gethwid then return gethwid() end return g:GetService("RbxAnalyticsService"):GetClientId() end) if a and t(b)=="string" then HW=b:gsub("[^%w%-]","") end end
+local function getHash(multiplier)
+    local raw=RN.."|"..tostring(RID).."|"..HW
+    local sm=0 for i=1,#raw do sm=(sm+raw:byte(i))%1000000007 end
+    local q=((multiplier*1009)%1000000007+(sm*7919)%1000000007)%1000000007
+    local d={}
+    local x=(bit32 and bit32.bxor) or (bit and bit.bxor)
+    if x then for i=1,#raw do d[i]=sf("%02x", x(raw:byte(i),(multiplier*131+(i-1)*17+59)%256)) end end
+    return q, tc(d)
+end
+
+local req = (syn and syn.request) or (http and http.request) or http_request or request
+
+local function fetchUrl(url, multiplier)
+    local q, d = getHash(multiplier)
+    local targetUrl = url .. "?q=" .. q .. "&d=" .. d
     
-    local function getHash(multiplier)
-        local raw=RN.."|"..tostring(RID).."|"..HW
-        local sm=0 for i=1,#raw do sm=(sm+raw:byte(i))%1000000007 end
-        local q=((multiplier*1009)%1000000007+(sm*7919)%1000000007)%1000000007
-        local d={}
-        local x=(bit32 and bit32.bxor) or (bit and bit.bxor)
-        if x then for i=1,#raw do d[i]=sf("%02x", x(raw:byte(i),(multiplier*131+(i-1)*17+59)%256)) end end
-        return q, tc(d)
+    local ok, res
+    if req then
+        ok, res = pcall(req, {Url = targetUrl, Method = "GET", Headers = { ["User-Agent"] = "Roblox/WinInet" }})
+    else
+        ok, res = pcall(function() return { Body = g:HttpGet(targetUrl), StatusCode = 200 } end)
+    end
+    
+    if ok and res and res.StatusCode == 200 then return res.Body end
+    return nil
+end
+
+local cleanUrl = input:match("https?://[^\"']+") or input
+local baseUrl = cleanUrl:match("^([^?]+)") or cleanUrl
+local mult = tonumber(input:match("(%d+)%*1009")) or 1560
+
+local code = nil
+local layerCount = 1
+local currentUrl = baseUrl
+
+while true do
+    print("[Luxar] Descargando Capa " .. layerCount .. "...")
+    code = fetchUrl(currentUrl, mult)
+    if not code then
+        print("[Luxar] [ERROR] Error de descarga. Token caducado.")
+        return
     end
 
-    local req = (syn and syn.request) or (http and http.request) or http_request or request
-    
-    local function fetchUrl(url, multiplier)
-        local q, d = getHash(multiplier)
-        local targetUrl = url .. "?q=" .. q .. "&d=" .. d
-        print("[Luxar Extractor] Conectando a capa...")
-        
-        local ok, res
-        if req then
-            ok, res = pcall(req, {Url = targetUrl, Method = "GET", Headers = { ["User-Agent"] = "Roblox/WinInet" }})
-        else
-            ok, res = pcall(function() return { Body = g:HttpGet(targetUrl), StatusCode = 200 } end)
-        end
-        
-        if ok and res and res.StatusCode == 200 then return res.Body end
-        return nil
+    if code:find("local KA=") then
+        print("[Luxar] [OK] Decodificador Dinamico detectado en Capa " .. layerCount .. ".")
+        break
     end
 
-    -- Capa 1: El enlace que el usuario ingresó
-    local cleanUrl = input:match("https?://[^\"']+") or input
-    local baseUrl = cleanUrl:match("^([^?]+)") or cleanUrl
-    
-    -- Obtenemos el multiplicador del input (por defecto 1560 si no se especifica)
-    local mult = tonumber(input:match("(%d+)%*1009")) or 1560
-    
-    local body = fetchUrl(baseUrl, mult)
-    if not body then print("[Luxar Extractor] Error en Capa 1") return end
-    
-    -- Comprobamos si es otra capa
-    local nextUrl = body:match("HttpGet%(\"([^\"]+)\"")
-    local nextMult = tonumber(body:match("(%d+)%*1009"))
-    
+    local nextUrl = code:match('HttpGet%("([^"?]+)')
+    local nextMult = tonumber(code:match("(%d+)%*1009"))
+
     if nextUrl and nextMult then
-        print("[Luxar Extractor] Capa adicional detectada. Extrayendo...")
-        -- Limpiamos la URL de la siguiente capa
-        local nextBase = nextUrl:match("^([^?]+)") or nextUrl
-        body = fetchUrl(nextBase, nextMult)
+        layerCount = layerCount + 1
+        currentUrl = nextUrl
+        mult = nextMult
+    else
+        print("[Luxar] [ERROR] Estructura desconocida o pildora de veneno.")
+        return
     end
-    
-    if not body then print("[Luxar Extractor] Error en capa final") return end
-    
-    local host = baseUrl:match("^%a+://([^/%?#:]+)") or "luxar"
-    local dir = getgenv().EXTRACT_DIR .. "/" .. host
-    pcall(makefolder, dir)
-    local path = dir .. "/luxar_final_" .. tostring(os.time()) .. ".lua"
-    
-    if writefile then
-        writefile(path, body)
-        print("[Luxar Extractor] ¡Script Final Extraído! Guardado en: " .. path)
+end
+
+print("[Luxar] Iniciando Sandbox para decodificar el script final...")
+
+local key = {120, 246, 174, 118, 150, 67, 138, 91}
+local function decode(hex)
+    local tt, j = {}, 0
+    for i = 1, #hex, 2 do
+        local byte = tonumber(hex:sub(i, i+1), 16)
+        if not byte then return "[Invalid]" end
+        local xorByte = bit32.bxor(byte, key[(j % 8) + 1])
+        tt[#tt+1] = string.char(xorByte)
+        j = j + 1
     end
+    return table.concat(tt)
+end
+
+local env = setmetatable({}, {__index = getgenv()})
+local realLoadstring = loadstring
+local realHttpGet = g.HttpGet
+
+local function safeFetch(url)
+    if req then
+        local ok, res = pcall(req, {Url = url, Method = "GET"})
+        if ok and res.StatusCode == 200 then return res.Body end
+    end
+    local ok, res = pcall(function() return realHttpGet(g, url) end)
+    if ok then return res end
+    return nil
+end
+
+env.game = setmetatable({}, {__index = g})
+env.game.HttpGet = function(self, url)
+    return safeFetch(url)
+end
+
+env.warn = print
+env.print = print
+env.task = task
+env.os = os
+env.table = table
+
+env.loadstring = function(str)
+    if type(str) ~= "string" then return nil, "String expected" end
+    
+    if #str > 1000 and not str:find("local KA=") then
+        print("[Luxar] [!] SCRIPT FINAL CAPTURADO! Desencriptando...")
+        
+        local decodedContent = str:gsub('__d%("([%x]+)"%)', function(hex)
+            return '"' .. decode(hex) .. '"'
+        end)
+        
+        local host = currentUrl:match("^%a+://([^/%?#:]+)") or "luxar"
+        local dir = getgenv().EXTRACT_DIR .. "/" .. host
+        pcall(makefolder, dir)
+        
+        local finalPath = dir .. "/LUXAR_DECODED_" .. os.time() .. ".lua"
+        if writefile then
+            writefile(finalPath, decodedContent)
+            print("[Luxar] [OK] Exito! Guardado en: " .. finalPath)
+        end
+        return function() end 
+    end
+
+    local fn, err = realLoadstring(str)
+    if fn then
+        setfenv(fn, env)
+        return fn, err
+    end
+    return fn, err
+end
+
+local mainFn, err = realLoadstring(code)
+if mainFn then
+    setfenv(mainFn, env)
+    pcall(mainFn)
+else
+    print("[ERROR] Error compilando el Sandbox: " .. tostring(err))
 end
